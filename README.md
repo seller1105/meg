@@ -2,7 +2,7 @@
 
 AI-powered FFmpeg assistant for the terminal. Describe what you want in plain English — Meg returns a ready-to-run `ffmpeg` command and a short explanation. Paste an existing command with `--explain` to get a breakdown.
 
-**Status:** v0.1 release-ready. See [docs/STATUS.md](docs/STATUS.md) for the latest handoff.
+**Status:** v0.1 release-ready — wheel/sdist verified in clean installs; PyPI upload pending. See [docs/STATUS.md](docs/STATUS.md).
 
 ## Docs
 
@@ -39,12 +39,16 @@ Optional config file: `~/.meg/config.toml` (keys and default provider). Environm
 
 ## Install
 
-### From PyPI (when published)
+### From PyPI
+
+Not on PyPI yet. After `twine upload`, install with:
 
 ```bash
 pip install meg-cli
 meg --help
 ```
+
+Pre-publish check (clean venv): `python -m build` then `pip install dist/meg_cli-*.whl`.
 
 ### Development
 

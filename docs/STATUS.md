@@ -6,9 +6,9 @@
 
 
 
-**Last updated:** May 2026  
+**Last updated:** June 2026  
 
-**Version:** `0.1.0` (release-ready; PyPI publish pending)
+**Version:** `0.1.0` (release-ready; wheel/sdist install verified; PyPI upload pending)
 
 
 
@@ -48,7 +48,7 @@ Open-source CLI: plain English → FFmpeg command + explanation, or `--explain` 
 
 | 5 CLI polish | Done | UTF-8 stdout, actionable API errors, 60s provider timeouts |
 
-| 6 Ship | Ready | MIT `LICENSE`, README; git + CI on `main` locally; GitHub push needs `gh auth` |
+| 6 Ship | Ready | MIT `LICENSE`, README; GitHub `origin` on `main`; `python -m build` + clean venv wheel/sdist install OK; PyPI + `v0.1.0` tag pending |
 
 
 
@@ -162,9 +162,9 @@ Captured in [qa-run.json](qa-run.json) (live API run after Phase 4 prompt harden
 
 
 
-1. **GitHub:** `gh auth login -h github.com -p https -w` then `.\scripts\github-publish.ps1` (or `-Org otrm` for an org repo)
+1. **Phase 6 — Publish:** `python -m build` then `twine upload dist/*`; tag `v0.1.0` and `git push origin v0.1.0`
 
-2. **Phase 6 — Publish:** `python -m build` then `twine upload dist/*`; tag `v0.1.0`
+2. **Verify PyPI:** fresh venv → `pip install meg-cli` → `meg --help` → `pip check`
 
 3. **Optional:** `.env` loading (currently env vars only; `.env` is gitignored but not auto-loaded)
 
@@ -198,5 +198,6 @@ Error interpreter, batch, presets, GUI, hardware detection — see roadmap and `
 
 - [x] Prompt suite consistently "power-user good" (Phase 4)
 
-- [ ] Ship to PyPI + release tag (Phase 6 — LICENSE done; publish pending)
+- [x] Package builds; wheel/sdist install in clean venv (June 2026)
+- [ ] Ship to PyPI + release tag `v0.1.0`
 
