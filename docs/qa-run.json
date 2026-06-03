@@ -1,0 +1,209 @@
+[
+  {
+    "id": "G1",
+    "mode": "generate",
+    "input": "Convert this MKV to H.264 MP4 with AAC audio",
+    "exit_code": 0,
+    "elapsed_s": 7.32,
+    "stdout": "ffmpeg -i input.mkv -map 0:v:0 -map 0:a:0 -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k output.mp4\n\n- Maps the first video and first audio stream explicitly to avoid ambiguity with multi-track sources\n- Encodes video as H.264 using libx264 with CRF 23 (visually transparent quality) and medium preset for balanced speed/compression\n- Encodes audio as AAC at 128 kbit/s stereo, standard for MP4 delivery\n- Use ffprobe input.mkv to verify stream indices if the file has multiple video or audio tracks\n",
+    "stderr": ""
+  },
+  {
+    "id": "G2",
+    "mode": "generate",
+    "input": "Extract audio as 24-bit WAV",
+    "exit_code": 0,
+    "elapsed_s": 6.63,
+    "stdout": "ffmpeg -i input.mkv -map 0:a:0 -c:a pcm_s24le -ar 48000 output.wav\n\n- Extracts the first audio stream (-map 0:a:0) to uncompressed 24-bit PCM WAV\n- Uses pcm_s24le codec for 24-bit little-endian audio at 48kHz sample rate\n- Verify input audio track index with ffprobe if your source has multiple audio streams\n- WAV container requires explicit codec; defaults would fall back to 16-bit\n",
+    "stderr": ""
+  },
+  {
+    "id": "G3",
+    "mode": "generate",
+    "input": "Scale to 1920x1080, keep aspect ratio, pad with black",
+    "exit_code": 0,
+    "elapsed_s": 8.76,
+    "stdout": "ffmpeg -i input.mp4 -vf \"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black\" -c:v libx264 -preset medium -crf 23 -c:a copy output.mp4\n\n- scale filter resizes to fit within 1920x1080 while preserving aspect ratio (decrease ensures no dimension exceeds target)\n- pad filter adds black bars centered horizontally and vertically to fill exact 1920x1080 frame\n- Video re-encoded with H.264 at CRF 23 (adjust for quality/size tradeoff); audio copied without re-encoding\n- Verify input resolution with ffprobe first to confirm scaling behavior matches expectations\n",
+    "stderr": ""
+  },
+  {
+    "id": "G4",
+    "mode": "generate",
+    "input": "Normalize loudness to -23 LUFS (broadcast)",
+    "exit_code": 0,
+    "elapsed_s": 8.54,
+    "stdout": "ffmpeg -i input.mp4 -af loudnorm=I=-23:TP=-1:LRA=7 -c:v copy -c:a aac -b:a 192k output.mp4\n\n- Applies single-pass loudnorm filter targeting -23 LUFS (EBU R128 broadcast standard) with -1 dBTP true peak and 7 LU loudness range\n- Copies video stream unchanged, re-encodes audio to AAC at 192k\n- This is approximate; for accurate normalization, use a two-pass workflow: first pass measures loudness stats, second pass applies precise correction based on measured values\n- Verify final loudness with ffmpeg -i output.mp4 -af loudnorm=print_format=summary -f null - or use tools like loudness-scanner\n",
+    "stderr": ""
+  },
+  {
+    "id": "G5",
+    "mode": "generate",
+    "input": "Concatenate three MP4s in order",
+    "exit_code": 0,
+    "elapsed_s": 7.47,
+    "stdout": "ffmpeg -f concat -safe 0 -i filelist.txt -c copy output.mp4\n\n- Creates a filelist.txt containing lines like \"file 'video1.mp4'\" for each input in order\n- Uses the concat demuxer to join segments without re-encoding (-c copy)\n- Requires all inputs to have identical codec/resolution/framerate for stream copy to work\n- Verify track compatibility with ffprobe beforehand; mismatches require re-encoding with concat filter instead\n",
+    "stderr": ""
+  },
+  {
+    "id": "G6",
+    "mode": "generate",
+    "input": "Remux only \u2014 copy all streams, change container to MP4",
+    "exit_code": 0,
+    "elapsed_s": 6.63,
+    "stdout": "ffmpeg -i input.mkv -map 0 -c copy output.mp4\n\n- Copies all streams (video, audio, subtitles, data) without re-encoding\n- -map 0 includes every stream from the input file\n- -c copy uses stream copy mode for maximum speed and zero quality loss\n- Note: MP4 container may not support all subtitle formats (e.g., PGS, ASS); verify with ffprobe if streams fail to copy\n",
+    "stderr": ""
+  },
+  {
+    "id": "G7",
+    "mode": "generate",
+    "input": "Burn in SRT subtitles (hardcode)",
+    "exit_code": 0,
+    "elapsed_s": 6.65,
+    "stdout": "ffmpeg -i input.mp4 -vf subtitles=subtitles.srt -c:v libx264 -crf 18 -preset medium -c:a copy output.mp4\n\n- Burns the SRT subtitle file directly into the video frames using the subtitles filter\n- Re-encodes video with libx264 at CRF 18 (high quality) to preserve visual fidelity during the burn-in process\n- Copies the audio stream without re-encoding to avoid quality loss\n- Outputs to MP4 container suitable for web and broadcast delivery\n",
+    "stderr": ""
+  },
+  {
+    "id": "G8",
+    "mode": "generate",
+    "input": "Extract frame at 00:01:30 as PNG",
+    "exit_code": 0,
+    "elapsed_s": 6.44,
+    "stdout": "ffmpeg -ss 00:01:30 -i input.mkv -frames:v 1 -q:v 1 output.png\n\n- `-ss 00:01:30` seeks to 1 minute 30 seconds before decoding (fast input seeking)\n- `-frames:v 1` extracts exactly one video frame\n- `-q:v 1` sets PNG quality to highest (lowest compression, best fidelity)\n- Output format is PNG by extension; frame is extracted at the seek point\n",
+    "stderr": ""
+  },
+  {
+    "id": "G9",
+    "mode": "generate",
+    "input": "Deinterlace 1080i to 1080p",
+    "exit_code": 0,
+    "elapsed_s": 8.68,
+    "stdout": "ffmpeg -i input.mts -vf yadif=1:-1:0 -c:v libx264 -preset medium -crf 18 -c:a copy output.mp4\n\n- Uses yadif deinterlacer with mode=1 (output one frame per field, doubling framerate from 29.97i to 59.94p or 25i to 50p)\n- Encodes to H.264 with CRF 18 for high quality; adjust CRF lower for better quality or higher for smaller files\n- Copies audio unchanged; use ffprobe to verify field order if results look wrong (yadif auto-detects by default)\n- For broadcast: consider mode=0 (one frame per frame, same framerate) if 59.94p/50p is not desired\n",
+    "stderr": ""
+  },
+  {
+    "id": "G10",
+    "mode": "generate",
+    "input": "Package as ProRes 422 HQ MOV",
+    "exit_code": 0,
+    "elapsed_s": 7.16,
+    "stdout": "ffmpeg -i input.mkv -c:v prores_ks -profile:v 3 -c:a pcm_s24le -ar 48000 output.mov\n\n- Encodes video to ProRes 422 HQ (profile 3) using the prores_ks encoder\n- Converts audio to 24-bit PCM at 48kHz, standard for broadcast workflows\n- Outputs to MOV container, the native wrapper for ProRes\n- Verify input stream indices with ffprobe if multiple tracks exist; adjust -map parameters as needed\n",
+    "stderr": ""
+  },
+  {
+    "id": "G11",
+    "mode": "generate",
+    "input": "IMF-style deliverable (high level)",
+    "exit_code": 0,
+    "elapsed_s": 11.22,
+    "stdout": "ffmpeg -i input.mxf -c:v prores_ks -profile:v 3 -vendor ap10 -pix_fmt yuv422p10le -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a pcm_s24le -ar 48000 -map 0:v:0 -map 0:a:0 output.mxf\n\n- Creates a broadcast-grade MXF master (ProRes 422 HQ video, 24-bit PCM audio) suitable as an IMF track file placeholder.\n- Sets Rec.709 color metadata and 48kHz audio to match typical IMF delivery specs.\n- This is NOT a complete IMF package\u2014real IMF requires CPL, ASSETMAP, PKL, and potentially multiple track files conforming to specific Application specs.\n- Use this as a starting point for individual essence files; authoring a full IMP requires specialized IMF packaging tools beyond FFmpeg.\n",
+    "stderr": ""
+  },
+  {
+    "id": "G12",
+    "mode": "generate",
+    "input": "H.264 CRF 18, slow preset, web streaming",
+    "exit_code": 0,
+    "elapsed_s": 7.39,
+    "stdout": "ffmpeg -i input.mkv -c:v libx264 -preset slow -crf 18 -c:a aac -b:a 192k -movflags +faststart output.mp4\n\n- H.264 video at CRF 18 (visually lossless quality) with slow preset for better compression efficiency\n- AAC audio at 192k for web compatibility\n- +faststart flag relocates moov atom to file start, enabling progressive streaming/playback before full download\n- Output to MP4 container for broad web player support\n",
+    "stderr": ""
+  },
+  {
+    "id": "G13",
+    "mode": "generate",
+    "input": "Strip all audio, keep video only",
+    "exit_code": 0,
+    "elapsed_s": 6.58,
+    "stdout": "ffmpeg -i input.mp4 -map 0:v -c:v copy -an output.mp4\n\n- Maps only the video stream(s) from the input using `-map 0:v`\n- Copies the video codec directly without re-encoding via `-c:v copy` for speed and quality preservation\n- Explicitly removes all audio with `-an` (no audio)\n- Outputs a video-only MP4 file suitable for web delivery or further processing\n",
+    "stderr": ""
+  },
+  {
+    "id": "G14",
+    "mode": "generate",
+    "input": "Two audio tracks \u2014 map English AAC, copy video",
+    "exit_code": 0,
+    "elapsed_s": 7.9,
+    "stdout": "ffmpeg -i input.mkv -map 0:v:0 -c:v copy -map 0:a:0 -map 0:a:1 -c:a aac -b:a 192k output.mp4\n\n- Maps the first video stream and copies it without re-encoding\n- Maps the first two audio streams and encodes both to AAC at 192k per track\n- Assumes the first two audio tracks are the desired English streams; verify track order with `ffprobe input.mkv` and adjust indices if needed\n- If language metadata is reliable, use `-map 0:a:m:language:eng` to select only English tracks automatically\n",
+    "stderr": ""
+  },
+  {
+    "id": "G15",
+    "mode": "generate",
+    "input": "Crop center 16:9 from 4:3 source",
+    "exit_code": 0,
+    "elapsed_s": 9.22,
+    "stdout": "ffmpeg -i input.mp4 -vf \"crop=ih*16/9:ih:(iw-ih*16/9)/2:0\" -c:a copy output.mp4\n\n- Crops a centered 16:9 region from a 4:3 source by calculating width as (height \u00d7 16/9) and centering horizontally.\n- X-offset formula (iw-ih*16/9)/2 ensures the crop is centered; Y-offset is 0 (no vertical crop needed).\n- Audio is stream-copied; re-encode video with your desired codec/quality settings if needed (add -c:v libx264 -crf 18, etc.).\n",
+    "stderr": ""
+  },
+  {
+    "id": "E1",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mp4 -vf scale=1920:1080 -c:v libx264 out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 11.5,
+    "stdout": "INPUT:\n- in.mp4: source video file\n\nVIDEO FILTERING:\n- scale=1920:1080: resizes video to 1920x1080 (Full HD)\n- Aspect ratio not preserved unless source matches 16:9\n- May introduce distortion if source aspect differs\n\nVIDEO ENCODING:\n- libx264: H.264 codec (re-encodes video)\n- Default preset (medium) and CRF (~23) apply\n- Quality loss from re-encoding\n\nAUDIO HANDLING:\n- No explicit audio codec specified\n- FFmpeg auto-selects encoder (likely AAC for MP4)\n- Audio is re-encoded (not stream copied)\n\nOUTPUT:\n- out.mp4: output container\n\nKEY RISKS:\n- Forced scaling may distort image if aspect ratio mismatches\n- Full re-encode of both streams (slower, quality loss)\n- No bitrate/quality control specified (relies on defaults)\n\nCOMMON ALTERNATIVES:\n- Add -c:a copy to avoid re-encoding audio\n- Use scale=1920:-1 to preserve aspect ratio\n- Add -crf 18 for higher quality or -preset faster for speed\n",
+    "stderr": ""
+  },
+  {
+    "id": "E2",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mov -c copy out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 10.54,
+    "stdout": "**Input/Output:**\n- Input: in.mov (QuickTime container)\n- Output: out.mp4 (MP4 container)\n\n**Processing:**\n- `-c copy` \u2014 Stream copy mode for all streams (video, audio, subtitles)\n- No re-encoding; copies compressed data directly from container to container\n- Fast operation (near-instant for small files)\n- Output quality identical to input\n\n**Key Considerations:**\n- Requires codec compatibility: MP4 must support the codecs present in the MOV file (usually fine for H.264/AAC)\n- Will fail if source contains codecs unsupported by MP4 (e.g., ProRes video without conversion)\n- Metadata/timecodes may shift slightly during remuxing\n- No quality loss since no transcoding occurs\n",
+    "stderr": ""
+  },
+  {
+    "id": "E3",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mp4 -vn -acodec pcm_s24le out.wav",
+    "exit_code": 0,
+    "elapsed_s": 11.08,
+    "stdout": "Input:\n- \"-i in.mp4\" \u2013 source file (MP4 container, likely video + audio)\n\nOutput configuration:\n- \"-vn\" \u2013 disables video stream (no video in output)\n- \"-acodec pcm_s24le\" \u2013 encodes audio to uncompressed PCM, 24-bit signed little-endian\n- \"out.wav\" \u2013 output file (WAV container)\n\nStream handling:\n- Only audio is extracted and re-encoded\n- Video is discarded entirely\n\nKey points:\n- Full audio re-encode (not stream copy), introduces processing overhead\n- 24-bit PCM produces large, lossless files (~4.6 MB per minute stereo at 48 kHz)\n- Sample rate and channel layout preserved from source by default\n- WAV container does not support metadata or chapters\n\nRisk considerations:\n- If source audio is already lossless or high bitrate, consider \"-acodec copy\" if container supports it\n- No quality loss during conversion, but file size will be significantly larger than compressed formats\n",
+    "stderr": ""
+  },
+  {
+    "id": "E4",
+    "mode": "explain",
+    "input": "ffmpeg -f concat -safe 0 -i list.txt -c copy out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 10.23,
+    "stdout": "Input:\n- `-f concat`: Uses the concat demuxer to read a list of files\n- `-safe 0`: Disables safe mode, allowing absolute paths in list.txt\n- `-i list.txt`: Text file containing file paths (format: \"file '/path/to/video.mp4'\")\n\nProcessing:\n- `-c copy`: Stream copy mode\u2014no re-encoding (video/audio copied as-is)\n\nOutput:\n- `out.mp4`: Concatenated result in MP4 container\n\nKey Points:\n- All input files must have identical codec parameters (resolution, framerate, codec, etc.)\n- Extremely fast since no encoding occurs\n- If files differ in specs, you'll get errors or broken output\n- list.txt format: one line per file as `file 'path'`\n\nRisks:\n- Mismatched codecs/formats will fail silently or produce corrupted output\n- Safe mode disabled means any file path is allowed (potential security concern in automated systems)\n",
+    "stderr": ""
+  },
+  {
+    "id": "E5",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mp4 -filter_complex \"[0:v]yadif[outv]\" -map \"[outv]\" -map 0:a -c:v libx264 -c:a copy out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 10.61,
+    "stdout": "INPUT:\n\u2022 -i in.mp4 \u2014 Single input file\n\nFILTER COMPLEX:\n\u2022 [0:v]yadif[outv] \u2014 Deinterlaces video stream from input 0 using yadif (Yet Another Deinterlacing Filter)\n\u2022 Labels output as [outv] for later mapping\n\nSTREAM MAPPING:\n\u2022 -map \"[outv]\" \u2014 Maps deinterlaced video from filtergraph to output\n\u2022 -map 0:a \u2014 Maps all audio streams from input 0 to output (bypasses filtergraph)\n\nENCODING:\n\u2022 -c:v libx264 \u2014 Re-encodes video using H.264 codec (required because filtergraph modifies video)\n\u2022 -c:a copy \u2014 Stream copies audio without re-encoding (no processing applied)\n\nOUTPUT:\n\u2022 out.mp4 \u2014 MP4 container with deinterlaced video and original audio\n\nKEY NOTES:\n\u2022 Video must be re-encoded because yadif alters frame structure\n\u2022 Audio remains untouched (fast, lossless passthrough)\n\u2022 Default libx264 settings used (medium preset, CRF 23 typical)\n\u2022 If input is already progressive, yadif adds minimal overhead but won't harm output\n",
+    "stderr": ""
+  },
+  {
+    "id": "E6",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mp4 -map 0:v:0 -map 0:a:1 -c copy out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 10.38,
+    "stdout": "**Input:**\n- `-i in.mp4` \u2013 Single input file\n\n**Stream Selection:**\n- `-map 0:v:0` \u2013 Select first video stream from input 0\n- `-map 0:a:1` \u2013 Select second audio stream from input 0\n- Explicit mapping overrides default stream selection; only mapped streams are included in output\n\n**Codec Settings:**\n- `-c copy` \u2013 Stream copy mode (no re-encoding) for all mapped streams\n- Fast operation, no quality loss\n- Output container must support the source codecs/formats\n\n**Output:**\n- `out.mp4` \u2013 Single output file with 1 video + 1 audio stream\n\n**Key Notes:**\n- If input has only one audio stream, `-map 0:a:1` will fail (stream not found)\n- Stream copy preserves timestamps, metadata, and bitstream exactly\n- Useful for extracting specific tracks or dropping unwanted streams without re-encoding\n",
+    "stderr": ""
+  },
+  {
+    "id": "E7",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mp4 -af loudnorm=I=-23:TP=-1:LRA=7 out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 12.6,
+    "stdout": "**Input:**\n- `-i in.mp4` \u2014 Single video input file\n\n**Audio Filter:**\n- `-af loudnorm=I=-23:TP=-1:LRA=7` \u2014 EBU R128 loudness normalization\n  - `I=-23` \u2014 Integrated loudness target of -23 LUFS (broadcast standard)\n  - `TP=-1` \u2014 True peak limit of -1 dBTP (prevents clipping)\n  - `LRA=7` \u2014 Loudness range target of 7 LU (dynamic range compression)\n  - Single-pass mode (fast but less accurate; two-pass mode requires measuring first)\n\n**Output:**\n- `out.mp4` \u2014 Re-encodes both audio and video\n  - Audio: Re-encoded with normalization applied\n  - Video: Unnecessarily re-encoded (no video processing specified)\n\n**Key Notes:**\n- **Video re-encode penalty:** Add `-c:v copy` to stream-copy video and avoid quality loss\n- **Single-pass limitation:** Measurement and normalization happen simultaneously; for critical work, measure first with `loudnorm=print_format=json`, then apply measured parameters in second pass\n- **No explicit codec selection:** Uses FFmpeg defaults (typically libx264 for video, AAC for audio in MP4)\n",
+    "stderr": ""
+  },
+  {
+    "id": "E8",
+    "mode": "explain",
+    "input": "ffmpeg -i in.mp4 -hwaccel cuda -c:v h264_nvenc out.mp4",
+    "exit_code": 0,
+    "elapsed_s": 10.29,
+    "stdout": "**Inputs**\n- `-i in.mp4`: Single input file\n\n**Hardware Acceleration**\n- `-hwaccel cuda`: Enables NVIDIA GPU decoding (applies to input)\n- Reduces CPU load during decode, but requires compatible GPU + driver\n\n**Video Codec**\n- `-c:v h264_nvenc`: Encodes video using NVIDIA hardware encoder (NVENC)\n- H.264 output, GPU-accelerated encoding\n\n**Audio Handling**\n- No audio codec specified \u2192 default behavior (usually stream copy or re-encode depending on compatibility)\n\n**Output**\n- `out.mp4`: MP4 container with hardware-encoded H.264 video\n\n**Key Notes**\n- `-hwaccel cuda` placement before `-i` is correct (applies to decoding)\n- Full GPU pipeline: decode on GPU \u2192 encode on GPU\n- No quality/bitrate flags \u2192 uses NVENC defaults (may differ from software encoder quality)\n- No explicit stream mapping \u2192 all streams processed automatically\n",
+    "stderr": ""
+  }
+]

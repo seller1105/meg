@@ -1,0 +1,139 @@
+# Meg — Cursor Rules
+
+## What This Project Is
+
+Meg is an open-source, AI-powered CLI tool that lets video engineers and developers construct,
+understand, and debug FFmpeg commands using plain English. Full product context is in VISION.md
+at the root of this repo — read it before doing anything.
+
+**Current implementation status:** `docs/STATUS.md` (phases done, QA results, next tasks).
+Milestones and test suite: `docs/v0.1-roadmap.md`.
+
+---
+
+## v0.1 Scope — The Hard Constraint
+
+The first release does exactly three things:
+
+1. Accept a plain-English request describing a video operation
+2. Output a correct, ready-to-run FFmpeg command
+3. Briefly explain what the command does and why
+
+**Do not propose, scaffold, or implement anything outside this scope during v0.1.**
+If a feature isn't one of these three things, it goes on the roadmap — not in the code.
+
+---
+
+## Tech Stack
+
+- **Language:** Python 3.11+
+- **CLI Framework:** Typer
+- **AI SDKs:** `anthropic`, `openai`
+- **Packaging:** pip-installable via PyPI (`pip install meg-cli`)
+- **Config:** Environment variables + optional `~/.meg/config.toml`
+- **Testing:** pytest
+
+Do not introduce new dependencies without discussing it first. Keep the dependency surface minimal.
+
+---
+
+## Project Structure
+
+```
+meg/
+├── meg/
+│   ├── __init__.py
+│   ├── cli.py          # Typer app, entry point
+│   ├── providers/
+│   │   ├── __init__.py
+│   │   ├── base.py     # Abstract provider interface
+│   │   ├── anthropic.py
+│   │   └── openai.py
+│   ├── prompt.py       # System prompt + prompt construction
+│   └── config.py       # Config loading (env vars, toml)
+├── tests/
+├── pyproject.toml
+├── VISION.md
+└── README.md
+```
+
+---
+
+## AI Provider Abstraction
+
+Both Anthropic (Claude) and OpenAI (GPT) are supported from day one.
+
+- Provider is selected via `--provider` flag or auto-detected from available API keys
+- If both keys are present, default to Claude
+- The provider interface must be abstract — `cli.py` should never import `anthropic` or `openai` directly
+- All provider logic lives in `meg/providers/`
+
+---
+
+## The System Prompt Is the Product
+
+The quality of the FFmpeg commands Meg generates is the entire v0.1 value proposition.
+Treat `prompt.py` as the most important file in the codebase.
+
+When working on the system prompt:
+- Prefer specificity over generality — FFmpeg has many footguns; the prompt should guard against them
+- Always include explanation behavior in the prompt, not just command generation
+- Test prompt changes against real-world use cases, not toy examples
+- Do not make the prompt conversational — output should be structured and scannable
+
+---
+
+## CLI Design Rules
+
+- Commands must feel native to the terminal — minimal output, no unnecessary decoration
+- Default output: the FFmpeg command, then a short explanation. Nothing else.
+- `--verbose` adds more detail to the explanation
+- `--provider` selects the AI backend
+- `--explain` accepts an existing FFmpeg command and explains it
+- Error messages must be human-readable and actionable
+
+---
+
+## Coding Style
+
+- Type hints everywhere — no untyped functions
+- Docstrings on all public functions and classes
+- No global state
+- Fail loudly with clear messages — never silently swallow errors
+- Keep functions small and single-purpose
+- Prefer explicit over clever
+
+---
+
+## Paired Programming Protocol
+
+This project is built collaboratively. When working on any task:
+
+1. **Propose before implementing** — for anything non-trivial, outline the approach first and wait for confirmation
+2. **One thing at a time** — don't scaffold the whole project in one move; build incrementally
+3. **Flag scope creep** — if a natural next step would pull us outside v0.1, name it and stop
+4. **Explain tradeoffs** — when there are two reasonable ways to do something, say so
+5. **Don't gold-plate** — v0.1 is about correctness and feel, not extensibility
+
+---
+
+## What NOT to Build in v0.1
+
+- GUI or web interface
+- Batch processing
+- Workflow automation
+- Preset library
+- Error interpreter (intercept FFmpeg stderr) — this is roadmap
+- Workflow memory / project preferences — this is roadmap
+- Hardware acceleration detection — this is roadmap
+
+These are explicitly deferred. Do not lay groundwork for them unless asked.
+
+---
+
+## Definition of Done (v0.1)
+
+- A post-production engineer can install Meg in under 2 minutes
+- The first command they run produces a correct, usable FFmpeg command
+- They understand what the command does without looking anything up
+- The codebase is clean enough that a new contributor can orient in 10 minutes
