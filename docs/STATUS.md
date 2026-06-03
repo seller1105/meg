@@ -48,7 +48,7 @@ Open-source CLI: plain English → FFmpeg command + explanation, or `--explain` 
 
 | 5 CLI polish | Done | UTF-8 stdout, actionable API errors, 60s provider timeouts |
 
-| 6 Ship | Ready | MIT `LICENSE`, README examples; PyPI publish + `v0.1.0` tag pending |
+| 6 Ship | Ready | MIT `LICENSE`, README; git + CI on `main` locally; GitHub push needs `gh auth` |
 
 
 
@@ -162,9 +162,11 @@ Captured in [qa-run.json](qa-run.json) (live API run after Phase 4 prompt harden
 
 
 
-1. **Phase 6 — Publish:** `python -m build` then `twine upload dist/*`; tag `v0.1.0`
+1. **GitHub:** `gh auth login -h github.com -p https -w` then `.\scripts\github-publish.ps1` (or `-Org otrm` for an org repo)
 
-2. **Optional:** `.env` loading (currently env vars only; `.env` is gitignored but not auto-loaded)
+2. **Phase 6 — Publish:** `python -m build` then `twine upload dist/*`; tag `v0.1.0`
+
+3. **Optional:** `.env` loading (currently env vars only; `.env` is gitignored but not auto-loaded)
 
 
 
