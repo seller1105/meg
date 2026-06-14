@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import sys
-from typing import NoReturn, Optional
+from typing import Callable, NoReturn, Optional
 
 import typer
 from meg.config import ConfigError, load_config
+from meg.exec import (
+    CommandValidationError,
+    parse_command_line,
+    run_command,
+    stderr_tail,
+    summarize_execution_failure,
+    validate_allowed_executable,
+)
 from meg.ffprobe import (
     build_source_context,
     extract_ffmpeg_input_paths,
@@ -16,16 +24,20 @@ from meg.prompt import (
     PromptParseError,
     build_explain_prompt,
     build_generate_prompt,
+    build_revise_prompt,
     parse_explain_response,
     parse_generate_response,
 )
 from meg.providers import create_provider
+from meg.providers.base import AIProvider
 
 app = typer.Typer(
     name="meg",
     help="AI-powered FFmpeg assistant for the terminal.",
     no_args_is_help=True,
 )
+
+_read_line: Callable[[], str] = input
 
 
 def _configure_terminal_utf8() -> None:
@@ -80,6 +92,164 @@ def _format_provider_error(exc: Exception) -> str:
 def _exit_provider_error(exc: Exception) -> NoReturn:
     typer.secho(_format_provider_error(exc), fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1) from exc
+
+
+def _stdin_is_interactive() -> bool:
+    """True when Meg can prompt for run/edit/exit."""
+    isatty = getattr(sys.stdin, "isatty", None)
+    return bool(isatty and isatty())
+
+
+def _prompt_run_edit_exit() -> str:
+    """Return ``run``, ``edit``, or ``exit`` from the post-explain menu."""
+    _echo("")
+    _echo("[r]un  [e]dit  [q]uit")
+    while True:
+        try:
+            raw = _read_line().strip().lower()
+        except EOFError:
+            return "exit"
+        if raw in {"r", "run"}:
+            return "run"
+        if raw in {"e", "edit"}:
+            return "edit"
+        if raw in {"q", "quit", "exit"}:
+            return "exit"
+        _echo("Enter r (run), e (edit), or q (quit).")
+
+
+def _prompt_revision_feedback() -> str:
+    """Read non-empty feedback for command revision."""
+    _echo("")
+    _echo("What should change?")
+    while True:
+        try:
+            feedback = _read_line().strip()
+        except EOFError:
+            raise typer.Exit(code=0)
+        if feedback:
+            return feedback
+        _echo("Feedback must not be empty.")
+
+
+def _prompt_show_stderr_tail(tail: list[str]) -> None:
+    """Offer the raw stderr tail after a failed run."""
+    _echo("")
+    _echo("Show stderr tail? [y/N]")
+    try:
+        answer = _read_line().strip().lower()
+    except EOFError:
+        return
+    if answer not in {"y", "yes"}:
+        return
+    _echo("")
+    for line in tail:
+        _echo(line)
+
+
+def _execute_approved_command(command: str) -> None:
+    """Parse, validate, and run an approved ffmpeg/ffprobe command."""
+    try:
+        parsed = parse_command_line(command)
+        validate_allowed_executable(parsed.argv)
+    except CommandValidationError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    _echo("")
+    _echo(f"Running: {parsed.display}")
+
+    result = run_command(parsed.argv)
+    if result.returncode == 0:
+        return
+
+    summary = summarize_execution_failure(result)
+    typer.secho(
+        f"Command failed (exit {result.returncode}): {summary}",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    if _stdin_is_interactive():
+        _prompt_show_stderr_tail(stderr_tail(result.stderr))
+    raise typer.Exit(code=result.returncode)
+
+
+def _generate_once(
+    ai_provider: AIProvider,
+    *,
+    request: str,
+    verbose: bool,
+    source_context: str | None,
+    previous_command: str | None = None,
+    feedback: str | None = None,
+) -> tuple[str, str]:
+    """Call the model once for initial generate or a revision."""
+    if previous_command is not None and feedback is not None:
+        prompt = build_revise_prompt(
+            request=request,
+            previous_command=previous_command,
+            feedback=feedback,
+            verbose=verbose,
+            source_context=source_context,
+        )
+    else:
+        prompt = build_generate_prompt(
+            request=request,
+            verbose=verbose,
+            source_context=source_context,
+        )
+    raw_response = ai_provider.complete(prompt.system, prompt.user)
+    parsed = parse_generate_response(raw_response)
+    return parsed.command, parsed.explanation
+
+
+def _run_generate_confirm_loop(
+    ai_provider: AIProvider,
+    *,
+    request: str,
+    verbose: bool,
+    source_context: str | None,
+) -> None:
+    """Generate → explain → run | edit | exit until the user is done."""
+    previous_command: str | None = None
+    feedback: str | None = None
+
+    while True:
+        try:
+            command, explanation = _generate_once(
+                ai_provider,
+                request=request,
+                verbose=verbose,
+                source_context=source_context,
+                previous_command=previous_command,
+                feedback=feedback,
+            )
+        except PromptParseError as exc:
+            typer.secho(
+                f"Could not parse model output: {exc}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+        except Exception as exc:
+            _exit_provider_error(exc)
+
+        _echo(command)
+        _echo("")
+        _echo(explanation)
+
+        if not _stdin_is_interactive():
+            return
+
+        choice = _prompt_run_edit_exit()
+        if choice == "exit":
+            return
+        if choice == "run":
+            _execute_approved_command(command)
+            return
+
+        feedback = _prompt_revision_feedback()
+        previous_command = command
 
 
 @app.callback(invoke_without_command=True)
@@ -186,25 +356,15 @@ def main(
         return
 
     if request is not None:
+        source_context = build_source_context(extract_media_paths(request))
         try:
-            source_context = build_source_context(extract_media_paths(request))
-            prompt = build_generate_prompt(
+            _run_generate_confirm_loop(
+                ai_provider,
                 request=request,
                 verbose=verbose,
                 source_context=source_context,
             )
-            raw_response = ai_provider.complete(prompt.system, prompt.user)
-            parsed = parse_generate_response(raw_response)
-        except PromptParseError as exc:
-            typer.secho(
-                f"Could not parse model output: {exc}",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1) from exc
+        except typer.Exit:
+            raise
         except Exception as exc:
             _exit_provider_error(exc)
-
-        _echo(parsed.command)
-        _echo("")
-        _echo(parsed.explanation)

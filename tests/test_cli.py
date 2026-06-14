@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from meg.cli import app
@@ -264,3 +265,149 @@ def test_generate_request_reports_timeout_with_actionable_message(monkeypatch) -
     assert result.exit_code == 1
     assert "timed out" in result.stderr.lower()
     assert "retry" in result.stderr.lower()
+
+
+def _fake_generate_response() -> str:
+    return "\n".join(
+        [
+            "COMMAND:",
+            "ffmpeg -i input.mkv -c:v libx264 -c:a aac output.mp4",
+            "EXPLANATION:",
+            "- Uses H.264 for broad playback compatibility.",
+        ]
+    )
+
+
+def test_generate_skips_confirm_loop_when_stdin_not_tty(monkeypatch) -> None:
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            _ = system, user
+            return _fake_generate_response()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: False)
+
+    result = runner.invoke(app, ["convert mkv to h264 mp4"])
+
+    assert result.exit_code == 0
+    assert "ffmpeg -i input.mkv" in result.stdout
+    assert "[r]un" not in result.stdout
+
+
+def test_generate_confirm_loop_quit(monkeypatch) -> None:
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            _ = system, user
+            return _fake_generate_response()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: True)
+
+    result = runner.invoke(app, ["convert mkv to h264 mp4"], input="q\n")
+
+    assert result.exit_code == 0
+    assert "[r]un" in result.stdout
+
+
+def test_generate_confirm_loop_runs_approved_command(monkeypatch) -> None:
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            _ = system, user
+            return _fake_generate_response()
+
+    captured: dict[str, object] = {}
+
+    def fake_run_command(argv):
+        captured["argv"] = argv
+        from meg.exec import ExecutionResult
+
+        return ExecutionResult(returncode=0, stderr="")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("meg.cli.run_command", fake_run_command)
+
+    result = runner.invoke(app, ["convert mkv to h264 mp4"], input="r\n")
+
+    assert result.exit_code == 0
+    assert "Running:" in result.stdout
+    assert captured["argv"][0] == "ffmpeg"
+    assert captured["argv"][-1] == "output.mp4"
+
+
+def test_generate_confirm_loop_edit_regenerates_with_feedback(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            calls.append(user)
+            if len(calls) == 1:
+                return _fake_generate_response()
+            return "\n".join(
+                [
+                    "COMMAND:",
+                    "ffmpeg -i input.mkv -c:v libx264 -crf 18 -c:a aac output.mp4",
+                    "EXPLANATION:",
+                    "- Adds CRF 18 for higher quality.",
+                ]
+            )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: True)
+
+    result = runner.invoke(
+        app,
+        ["convert mkv to h264 mp4"],
+        input="e\nuse crf 18\nq\n",
+    )
+
+    assert result.exit_code == 0
+    assert len(calls) == 2
+    assert "User feedback: use crf 18" in calls[1]
+    assert "crf 18" in result.stdout
+
+
+def test_generate_run_failure_shows_summary_and_optional_tail(monkeypatch) -> None:
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            _ = system, user
+            return _fake_generate_response()
+
+    def fake_run_command(argv):
+        _ = argv
+        from meg.exec import ExecutionResult
+
+        return ExecutionResult(
+            returncode=1,
+            stderr="frame= 0 fps=0.0\nError opening output file: Permission denied\n",
+        )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("meg.cli.run_command", fake_run_command)
+
+    result = runner.invoke(app, ["convert mkv to h264 mp4"], input="r\nn\n")
+
+    assert result.exit_code == 1
+    assert "Command failed" in result.stderr
+    assert "Permission denied" in result.stderr
+    assert "Show stderr tail?" in result.stdout
+
+
+def test_execute_approved_command_rejects_disallowed_executable(capsys) -> None:
+    from click.exceptions import Exit
+
+    from meg.cli import _execute_approved_command
+
+    with pytest.raises(Exit) as exc_info:
+        _execute_approved_command("bash -c 'rm -rf /'")
+
+    assert exc_info.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "Only ffmpeg and ffprobe" in captured.err
+
