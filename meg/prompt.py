@@ -88,6 +88,31 @@ def _strip_code_fences(text: str) -> str:
     return cleaned
 
 
+def build_revise_prompt(
+    request: str,
+    previous_command: str,
+    feedback: str,
+    verbose: bool = False,
+    source_context: str | None = None,
+) -> PromptBundle:
+    """Build prompts to regenerate a command after user feedback."""
+    detail_instruction = (
+        "Keep explanation concise and operator-focused."
+        if not verbose
+        else "Provide slightly deeper rationale for codec/filter/mapping choices."
+    )
+    user_prompt = (
+        "Revise an FFmpeg command based on user feedback.\n"
+        f"Original request: {request}\n"
+        f"Previous command: {previous_command}\n"
+        f"User feedback: {feedback}\n"
+    )
+    if source_context:
+        user_prompt += f"\n{source_context}\n"
+    user_prompt += detail_instruction
+    return PromptBundle(system=SYSTEM_PROMPT_GENERATE, user=user_prompt)
+
+
 def build_generate_prompt(
     request: str,
     verbose: bool = False,

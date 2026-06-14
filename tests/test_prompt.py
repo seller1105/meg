@@ -8,6 +8,7 @@ from meg.prompt import (
     PromptParseError,
     build_explain_prompt,
     build_generate_prompt,
+    build_revise_prompt,
     parse_explain_response,
     parse_generate_response,
 )
@@ -33,6 +34,17 @@ def test_build_generate_prompt_includes_source_context() -> None:
     assert "Verified source metadata" in bundle.user
     assert "1920x1080" in bundle.user
     assert "scale clip.mov to 720p" in bundle.user
+
+
+def test_build_revise_prompt_includes_feedback_and_previous_command() -> None:
+    bundle = build_revise_prompt(
+        request="convert mkv to mp4",
+        previous_command="ffmpeg -i input.mkv -c copy output.mp4",
+        feedback="re-encode video to h264 crf 18",
+    )
+    assert "Original request: convert mkv to mp4" in bundle.user
+    assert "Previous command: ffmpeg -i input.mkv -c copy output.mp4" in bundle.user
+    assert "User feedback: re-encode video to h264 crf 18" in bundle.user
 
 
 def test_system_prompt_preserves_probed_source_defaults() -> None:
