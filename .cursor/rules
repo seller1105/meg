@@ -50,6 +50,7 @@ meg/
 │   │   ├── anthropic.py
 │   │   └── openai.py
 │   ├── prompt.py       # System prompt + prompt construction
+│   ├── ffprobe.py      # Path detect, ffprobe, source metadata for prompts
 │   └── config.py       # Config loading (env vars, toml)
 ├── tests/
 ├── pyproject.toml

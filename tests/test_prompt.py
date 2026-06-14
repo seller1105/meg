@@ -27,6 +27,23 @@ def test_build_generate_prompt_verbose_changes_detail_instruction() -> None:
     assert "deeper rationale" in detailed.user
 
 
+def test_build_generate_prompt_includes_source_context() -> None:
+    context = "Verified source metadata\nSource: clip.mov\n  video[0]: h264, 1920x1080"
+    bundle = build_generate_prompt("scale clip.mov to 720p", source_context=context)
+    assert "Verified source metadata" in bundle.user
+    assert "1920x1080" in bundle.user
+    assert "scale clip.mov to 720p" in bundle.user
+
+
+def test_system_prompt_preserves_probed_source_defaults() -> None:
+    from meg.prompt import SYSTEM_PROMPT_GENERATE
+
+    assert "Never write output to the Source path" in SYSTEM_PROMPT_GENERATE
+    assert "clip.mov → clip_out.mov" in SYSTEM_PROMPT_GENERATE
+    assert "Preserve all probed specs" in SYSTEM_PROMPT_GENERATE
+    assert "Do not add delivery presets" in SYSTEM_PROMPT_GENERATE
+
+
 def test_parse_generate_response_happy_path() -> None:
     parsed = parse_generate_response(
         "\n".join(

@@ -2,7 +2,7 @@
 
 AI-powered FFmpeg assistant for the terminal. Describe what you want in plain English — Meg returns a ready-to-run `ffmpeg` command and a short explanation. Paste an existing command with `--explain` to get a breakdown.
 
-**Status:** v0.1 release-ready — wheel/sdist verified in clean installs; PyPI upload pending. See [docs/STATUS.md](docs/STATUS.md).
+**Status:** v0.2.0 — source-aware generate via auto ffprobe; PyPI upload pending. See [docs/STATUS.md](docs/STATUS.md).
 
 ## Docs
 
@@ -15,6 +15,7 @@ AI-powered FFmpeg assistant for the terminal. Describe what you want in plain En
 ## Requirements
 
 - Python 3.11+
+- **ffprobe** on `PATH` (optional but recommended — Meg auto-probes local media files referenced in prompts)
 - An API key: [Anthropic](https://console.anthropic.com/) (`ANTHROPIC_API_KEY`) and/or [OpenAI](https://platform.openai.com/) (`OPENAI_API_KEY`)
 
 Meg does not ship or proxy credentials. See [.env.example](.env.example) for variable names (do not commit real keys).
@@ -99,11 +100,22 @@ meg --provider openai "extract audio as 24-bit wav"
 
 # Override model for the selected provider
 meg --model claude-sonnet-4-5 "convert mkv to h264 mp4"
+
+# Path-based request — Meg ffprobes the file and tailors the command to real source specs
+meg "convert `"D:\renders\master.mov`" to UHD 23.98 fps"
 ```
 
 **Default output (generate):** one `ffmpeg` line, blank line, then a short bullet explanation.
 
 **Explain mode:** prints only the breakdown (no echoed command).
+
+**Path-based generate:** when your prompt includes a real local media path (not a placeholder like `input.mkv`), Meg runs `ffprobe`, injects a compact summary into the model context, and expects commands that:
+
+- Use the probed file as `-i`
+- Default output to `<stem>_out<ext>` beside the source (never overwrite the input)
+- Change only what you asked for; preserve probed codec, pixel format, color, and audio specs otherwise
+
+Probing is skipped for missing paths, network (UNC) paths, unreadable files, files over 50 GiB, or if ffprobe is not installed. ffprobe runs via argv (no shell) with a 30s timeout.
 
 **`--verbose`:** asks the model for a deeper explanation in both generate and explain modes. Default output stays minimal.
 
@@ -116,6 +128,7 @@ meg --model claude-sonnet-4-5 "convert mkv to h264 mp4"
 | Transcode to H.264/AAC | `meg "convert mkv to h264 mp4 with aac"` |
 | Broadcast loudness | `meg --verbose "normalize loudness to -23 LUFS"` |
 | Remux without re-encode | `meg "remux mkv to mp4, copy all streams"` |
+| Real file on disk | `meg "scale `"D:\clips\shot.mov`" to 1920x1080"` |
 | Explain scaling | `meg --explain "ffmpeg -i in.mp4 -vf scale=1920:1080 -c:v libx264 out.mp4"` |
 
 ## QA scripts
@@ -133,15 +146,15 @@ python scripts/summarize_qa.py
 python -m pip install build twine
 python -m build
 twine upload dist/*
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 ## Project layout
 
 ```
 meg/
-├── meg/           # package (cli, config, prompt, providers)
+├── meg/           # package (cli, config, prompt, ffprobe, providers)
 ├── tests/
 ├── docs/          # roadmap, STATUS, qa-run.json
 ├── scripts/       # QA helpers

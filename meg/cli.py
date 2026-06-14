@@ -7,6 +7,11 @@ from typing import NoReturn, Optional
 
 import typer
 from meg.config import ConfigError, load_config
+from meg.ffprobe import (
+    build_source_context,
+    extract_ffmpeg_input_paths,
+    extract_media_paths,
+)
 from meg.prompt import (
     PromptParseError,
     build_explain_prompt,
@@ -159,7 +164,12 @@ def main(
 
     if explain is not None:
         try:
-            prompt = build_explain_prompt(command=explain, verbose=verbose)
+            source_context = build_source_context(extract_ffmpeg_input_paths(explain))
+            prompt = build_explain_prompt(
+                command=explain,
+                verbose=verbose,
+                source_context=source_context,
+            )
             raw_response = ai_provider.complete(prompt.system, prompt.user)
             parsed = parse_explain_response(raw_response)
         except PromptParseError as exc:
@@ -177,7 +187,12 @@ def main(
 
     if request is not None:
         try:
-            prompt = build_generate_prompt(request=request, verbose=verbose)
+            source_context = build_source_context(extract_media_paths(request))
+            prompt = build_generate_prompt(
+                request=request,
+                verbose=verbose,
+                source_context=source_context,
+            )
             raw_response = ai_provider.complete(prompt.system, prompt.user)
             parsed = parse_generate_response(raw_response)
         except PromptParseError as exc:

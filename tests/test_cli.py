@@ -18,7 +18,7 @@ def test_help() -> None:
 def test_version_import() -> None:
     from meg import __version__
 
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0"
 
 
 def test_no_args_shows_help() -> None:
@@ -42,9 +42,12 @@ def test_request_without_api_keys_fails_with_actionable_error(
 
 
 def test_generate_request_prints_command_and_explanation(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
     class FakeProvider:
         def complete(self, system: str, user: str) -> str:
-            _ = system, user
+            captured["user"] = user
+            _ = system
             return "\n".join(
                 [
                     "COMMAND:",
@@ -66,6 +69,42 @@ def test_generate_request_prints_command_and_explanation(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "ffmpeg -i input.mkv -c:v libx264 -c:a aac output.mp4" in result.stdout
     assert "Uses H.264" in result.stdout
+    assert "Request: convert mkv to h264 mp4" in captured["user"]
+
+
+def test_generate_request_includes_ffprobe_context_for_local_file(
+    monkeypatch, tmp_path
+) -> None:
+    media = tmp_path / "source.mkv"
+    media.write_bytes(b"fake")
+    captured: dict[str, str] = {}
+
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            captured["user"] = user
+            _ = system
+            return "\n".join(
+                [
+                    "COMMAND:",
+                    f"ffmpeg -i {media} -c:v libx264 output.mp4",
+                    "EXPLANATION:",
+                    "- Scales from probed 3840x2160 source.",
+                ]
+            )
+
+    def fake_build_source_context(paths, *, ffprobe_bin=None):
+        assert str(media) in paths
+        return "Verified source metadata\nSource: source.mkv\n  video[0]: prores, 3840x2160"
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli.build_source_context", fake_build_source_context)
+
+    result = runner.invoke(app, [f'convert "{media}" to h264 mp4'])
+
+    assert result.exit_code == 0
+    assert "Verified source metadata" in captured["user"]
+    assert "3840x2160" in captured["user"]
 
 
 def test_generate_request_handles_parse_errors(monkeypatch) -> None:
