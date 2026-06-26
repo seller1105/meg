@@ -90,7 +90,20 @@ class MediaSummary:
     path: str
     container: str
     duration: str
+    duration_seconds: float | None
     streams: tuple[StreamSummary, ...]
+
+
+@dataclass(frozen=True)
+class _ProbeCacheKey:
+    """Cache key from a resolved path plus file identity."""
+
+    resolved_path: str
+    mtime_ns: int
+    size: int
+
+
+_PROBE_SUMMARY_CACHE: dict[_ProbeCacheKey, MediaSummary] = {}
 
 
 def extract_media_paths(text: str) -> list[str]:
@@ -153,6 +166,58 @@ def can_probe(
         return False
 
     return True
+
+
+def clear_probe_cache() -> None:
+    """Clear the in-process ffprobe result cache (mainly for tests)."""
+    _PROBE_SUMMARY_CACHE.clear()
+
+
+def _probe_cache_key(path: str | Path) -> _ProbeCacheKey | None:
+    """Build a cache key from a resolved file path, mtime, and size."""
+    candidate = Path(path)
+    try:
+        resolved = candidate.resolve(strict=False)
+        stat = resolved.stat()
+    except OSError:
+        return None
+    return _ProbeCacheKey(
+        resolved_path=os.path.normcase(str(resolved)),
+        mtime_ns=stat.st_mtime_ns,
+        size=stat.st_size,
+    )
+
+
+def probe_media_summary(
+    raw_path: str | Path,
+    *,
+    ffprobe_bin: str | None = None,
+) -> MediaSummary | None:
+    """Return a cached or freshly probed MediaSummary for one local file."""
+    if not can_probe(raw_path):
+        return None
+
+    path = Path(raw_path)
+    cache_key = _probe_cache_key(path)
+    if cache_key is None:
+        return None
+
+    cached = _PROBE_SUMMARY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    binary = ffprobe_bin or shutil.which("ffprobe")
+    if binary is None:
+        return None
+
+    try:
+        payload = run_ffprobe(str(path), ffprobe_bin=binary)
+        summary = parse_ffprobe_json(str(path), payload)
+    except FfprobeError:
+        return None
+
+    _PROBE_SUMMARY_CACHE[cache_key] = summary
+    return summary
 
 
 def extract_ffmpeg_input_paths(command: str) -> list[str]:
@@ -274,9 +339,16 @@ def parse_ffprobe_json(path: str, payload: dict[str, object]) -> MediaSummary:
     format_info = payload.get("format")
     format_dict = format_info if isinstance(format_info, dict) else {}
     container = str(format_dict.get("format_name") or "unknown")
-    duration = _format_duration(
+    raw_duration = (
         str(format_dict.get("duration")) if format_dict.get("duration") is not None else None
     )
+    duration_seconds: float | None = None
+    if raw_duration is not None:
+        try:
+            duration_seconds = float(raw_duration)
+        except ValueError:
+            duration_seconds = None
+    duration = _format_duration(raw_duration)
 
     streams_raw = payload.get("streams")
     stream_items = streams_raw if isinstance(streams_raw, list) else []
@@ -294,6 +366,7 @@ def parse_ffprobe_json(path: str, payload: dict[str, object]) -> MediaSummary:
         path=path,
         container=container,
         duration=duration,
+        duration_seconds=duration_seconds,
         streams=tuple(summaries),
     )
 
@@ -322,6 +395,10 @@ def run_ffprobe(
             check=False,
             timeout=timeout,
         )
+    except FileNotFoundError as exc:
+        raise FfprobeError(
+            "ffprobe was not found. Install FFmpeg and ensure ffprobe is on your PATH."
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise FfprobeError(f"ffprobe timed out after {timeout:g}s for {path}") from exc
     if completed.returncode != 0:
@@ -362,13 +439,8 @@ def build_source_context(paths: list[str], *, ffprobe_bin: str | None = None) ->
 
     blocks: list[str] = []
     for raw_path in paths:
-        if not can_probe(raw_path):
-            continue
-        path = Path(raw_path)
-        try:
-            payload = run_ffprobe(str(path), ffprobe_bin=binary)
-            summary = parse_ffprobe_json(str(path), payload)
-        except FfprobeError:
+        summary = probe_media_summary(raw_path, ffprobe_bin=binary)
+        if summary is None:
             continue
         blocks.append(format_media_summary(summary))
 

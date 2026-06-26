@@ -45,6 +45,7 @@ EXPLANATION:
 Rules:
 - The command must be practical and safe for production-minded users.
 - Prefer explicit codecs and mappings over ambiguous defaults.
+- Never include -y; Meg confirms before overwriting existing output files.
 - If no probed source path is available and input/output filenames are unknown, use clear placeholders like input.mkv and output.mp4.
 - When no probed source path is available and the user did not specify a format, match the output container to intent (e.g. .mp4 for web/broadcast delivery).
 - For broadcast loudness (-23 LUFS): prefer a two-pass loudnorm workflow; if you give a single-pass command, say it is approximate and note the two-pass alternative in the explanation.

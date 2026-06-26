@@ -115,11 +115,20 @@ meg "convert `"D:\renders\master.mov`" to UHD 23.98 fps"
 - Default output to `<stem>_out<ext>` beside the source (never overwrite the input)
 - Change only what you asked for; preserve probed codec, pixel format, color, and audio specs otherwise
 
-Probing is skipped for missing paths, network (UNC) paths, unreadable files, files over 50 GiB, or if ffprobe is not installed. ffprobe runs via argv (no shell) with a 30s timeout.
+Probing is skipped for missing paths, network (UNC) paths, unreadable files, files over 50 GiB, or if ffprobe is not installed. ffprobe runs via argv (no shell) with a 30s timeout. **Probe results are cached** per file (path + mtime + size) for the lifetime of the process, so edit/revise turns and repeat lookups do not re-run ffprobe.
+
+**Run generated commands (interactive):** after generate, Meg offers `[r]un  [e]dit  [q]uit`:
+
+- **Per-command approval** — choosing run shows the full command and asks `[y]es / [n]o`; each revised command requires fresh approval
+- **Safety checks** — refuses input=output paths; warns and confirms before overwriting an existing output file; strips model-supplied `-y` (Meg adds it only after you confirm overwrite)
+- **No-shell execution** — argv array only; `ffmpeg` / `ffprobe` allowlist; clear errors when binaries are missing
+- **Long encodes** — live progress on a TTY (`Encoding… time / duration speed frame`); press `q` to cancel or Ctrl+C to interrupt; **stall timeout** (default 180s without stderr activity, not a max encode length) via `MEG_EXEC_STALL_TIMEOUT_S`
 
 **`--verbose`:** asks the model for a deeper explanation in both generate and explain modes. Default output stays minimal.
 
 **Models:** defaults are `claude-sonnet-4-5` (Anthropic) and `gpt-5` (OpenAI). Override per provider via `MEG_ANTHROPIC_MODEL` / `MEG_OPENAI_MODEL`, `~/.meg/config.toml` (`anthropic_model`, `openai_model`), or `--model` for the active provider.
+
+**Environment (optional):** `MEG_EXEC_STALL_TIMEOUT_S` — seconds without ffmpeg stderr before Meg treats an encode as hung (default `180`). See [.env.example](.env.example).
 
 ## Examples
 
@@ -154,7 +163,7 @@ git push origin v0.2.0
 
 ```
 meg/
-├── meg/           # package (cli, config, prompt, ffprobe, providers)
+├── meg/           # package (cli, config, prompt, ffprobe, exec, providers)
 ├── tests/
 ├── docs/          # roadmap, STATUS, qa-run.json
 ├── scripts/       # QA helpers

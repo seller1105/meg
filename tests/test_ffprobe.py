@@ -14,13 +14,22 @@ from meg.ffprobe import (
     FFPROBE_TIMEOUT_SECONDS,
     build_source_context,
     can_probe,
+    clear_probe_cache,
     default_output_path,
     extract_ffmpeg_input_paths,
     extract_media_paths,
     format_media_summary,
     parse_ffprobe_json,
+    probe_media_summary,
     run_ffprobe,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_probe_cache() -> None:
+    clear_probe_cache()
+    yield
+    clear_probe_cache()
 
 
 SAMPLE_PROBE_JSON = {
@@ -74,6 +83,7 @@ def test_parse_ffprobe_json_summarizes_video_and_audio() -> None:
     summary = parse_ffprobe_json("master.mov", SAMPLE_PROBE_JSON)
     assert summary.container.startswith("mov")
     assert summary.duration == "2:05.500"
+    assert summary.duration_seconds == 125.5
     assert len(summary.streams) == 2
     assert summary.streams[0].kind == "video"
     assert "3840x2160" in summary.streams[0].details
@@ -169,6 +179,82 @@ def test_build_source_context_probes_existing_file(
     assert "Preserve every probed spec" in context
     assert "do not overwrite the input" in context
     assert "clip_out.mov" in context
+
+
+def test_probe_media_summary_caches_results_for_same_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media = tmp_path / "clip.mov"
+    media.write_bytes(b"not real media")
+    calls = 0
+
+    def fake_run_ffprobe(path: str, *, ffprobe_bin: str = "ffprobe") -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return SAMPLE_PROBE_JSON
+
+    monkeypatch.setattr("meg.ffprobe.run_ffprobe", fake_run_ffprobe)
+
+    first = probe_media_summary(media, ffprobe_bin="fake-ffprobe")
+    second = probe_media_summary(media, ffprobe_bin="fake-ffprobe")
+
+    assert calls == 1
+    assert first is not None
+    assert second == first
+
+
+def test_probe_media_summary_reprobes_after_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media = tmp_path / "clip.mov"
+    media.write_bytes(b"v1")
+    calls = 0
+
+    def fake_run_ffprobe(path: str, *, ffprobe_bin: str = "ffprobe") -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return SAMPLE_PROBE_JSON
+
+    monkeypatch.setattr("meg.ffprobe.run_ffprobe", fake_run_ffprobe)
+
+    probe_media_summary(media, ffprobe_bin="fake-ffprobe")
+    media.write_bytes(b"v2-longer")
+    probe_media_summary(media, ffprobe_bin="fake-ffprobe")
+
+    assert calls == 2
+
+
+def test_run_ffprobe_raises_when_binary_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    media = tmp_path / "clip.mov"
+    media.write_bytes(b"x")
+
+    def raise_not_found(*args, **kwargs):
+        _ = args, kwargs
+        raise FileNotFoundError(2, "No such file or directory", "ffprobe")
+
+    monkeypatch.setattr("meg.ffprobe.subprocess.run", raise_not_found)
+
+    with pytest.raises(FfprobeError, match="ffprobe was not found"):
+        run_ffprobe(str(media), ffprobe_bin="ffprobe")
+
+
+def test_build_source_context_skips_when_ffprobe_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    media = tmp_path / "clip.mov"
+    media.write_bytes(b"fake")
+
+    def raise_not_found(*args, **kwargs):
+        _ = args, kwargs
+        raise FileNotFoundError(2, "No such file or directory", "ffprobe")
+
+    monkeypatch.setattr("meg.ffprobe.subprocess.run", raise_not_found)
+
+    assert build_source_context([str(media)], ffprobe_bin="ffprobe") is None
 
 
 def test_run_ffprobe_raises_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

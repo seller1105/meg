@@ -107,6 +107,12 @@ def test_parse_generate_response_requires_ffmpeg_prefix() -> None:
         )
 
 
+def test_system_prompt_forbids_blind_y() -> None:
+    from meg.prompt import SYSTEM_PROMPT_GENERATE
+
+    assert "Never include -y" in SYSTEM_PROMPT_GENERATE
+
+
 def test_build_explain_prompt_includes_command() -> None:
     bundle = build_explain_prompt("ffmpeg -i input.mp4 -c copy output.mp4")
     assert "Command: ffmpeg -i input.mp4 -c copy output.mp4" in bundle.user
