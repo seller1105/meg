@@ -146,6 +146,8 @@ Probing is skipped for missing paths, network (UNC) paths, unreadable files, fil
 
 **Environment (optional):** `MEG_EXEC_STALL_TIMEOUT_S` — seconds without ffmpeg stderr before Meg treats an encode as hung (default `180`). See [.env.example](.env.example).
 
+**.env auto-loading:** Meg loads `.env` from the current directory, then `~/.meg/.env` (first match wins per variable). Real environment variables always take precedence, and `.env` stays gitignored — convenient for keys without `setx`. No dependency; simple `KEY=VALUE` lines with `#` comments, optional `export`, and quoted values.
+
 ## Examples
 
 | Task | Command |

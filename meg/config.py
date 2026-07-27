@@ -20,6 +20,65 @@ class ConfigError(ValueError):
     """Raised when Meg configuration is missing or invalid."""
 
 
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a .env file into a dict. Malformed lines are ignored.
+
+    Supports comments (#), blank lines, optional ``export `` prefixes, and
+    values wrapped in single or double quotes.
+    """
+    values: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return values
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def load_env_files(
+    paths: list[Path] | None = None,
+    *,
+    environ: Any = None,
+) -> dict[str, str]:
+    """Load .env files into the environment without overriding real env vars.
+
+    Default locations, in priority order: ``./.env`` then ``~/.meg/.env``.
+    A variable already present in the environment (or set by an earlier
+    file) is never overwritten. Returns the variables that were applied.
+    """
+    target = os.environ if environ is None else environ
+    candidates = paths if paths is not None else [
+        Path.cwd() / ".env",
+        Path.home() / ".meg" / ".env",
+    ]
+
+    applied: dict[str, str] = {}
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        for key, value in _parse_env_file(candidate).items():
+            if key not in target:
+                target[key] = value
+                applied[key] = value
+    return applied
+
+
 @dataclass(frozen=True)
 class MegConfig:
     """Runtime configuration loaded from env vars and optional TOML."""

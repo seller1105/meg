@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Callable, NoReturn, Optional
 
 import typer
-from meg.config import ConfigError, load_config
+from meg.config import ConfigError, load_config, load_env_files
 from meg.exec import (
     CommandValidationError,
     _is_concrete_output_path,
@@ -1180,6 +1180,7 @@ def main(
 ) -> None:
     """Generate or explain FFmpeg commands from plain English."""
     _configure_terminal_utf8()
+    load_env_files()  # ./.env then ~/.meg/.env; real env vars always win
 
     if ctx.invoked_subcommand is not None:
         return
