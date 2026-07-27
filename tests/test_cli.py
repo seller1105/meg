@@ -22,10 +22,10 @@ def test_version_import() -> None:
     assert __version__ == "0.2.0"
 
 
-def test_no_args_shows_help() -> None:
+def test_no_args_non_interactive_shows_help() -> None:
+    # Bare `meg` starts the REPL on a TTY; without one it prints help.
     result = runner.invoke(app, [])
-    # Typer/Click use exit code 2 when showing help via no_args_is_help.
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert "FFmpeg" in result.stdout
 
 
@@ -319,7 +319,7 @@ def test_generate_confirm_loop_runs_approved_command(monkeypatch) -> None:
 
     captured: dict[str, object] = {}
 
-    def fake_run(argv, *, interactive, source_duration_seconds=None):
+    def fake_run(argv, *, interactive, source_duration_seconds=None, allow_stdin_cancel=True):
         captured["argv"] = argv
         from meg.exec import ExecutionResult
 
@@ -377,7 +377,7 @@ def test_generate_run_failure_shows_summary_and_optional_tail(monkeypatch) -> No
             _ = system, user
             return _fake_generate_response()
 
-    def fake_run(argv, *, interactive, source_duration_seconds=None):
+    def fake_run(argv, *, interactive, source_duration_seconds=None, allow_stdin_cancel=True):
         _ = interactive, source_duration_seconds
         from meg.exec import ExecutionResult
 
@@ -437,7 +437,7 @@ def test_generate_edit_then_run_requires_fresh_confirm(monkeypatch) -> None:
 
     captured: list[tuple[str, ...]] = []
 
-    def fake_run(argv, *, interactive, source_duration_seconds=None):
+    def fake_run(argv, *, interactive, source_duration_seconds=None, allow_stdin_cancel=True):
         _ = interactive, source_duration_seconds
         captured.append(tuple(argv))
         from meg.exec import ExecutionResult
@@ -467,7 +467,7 @@ def test_generate_run_missing_ffmpeg_shows_clear_message(monkeypatch) -> None:
             _ = system, user
             return _fake_generate_response()
 
-    def fake_run(argv, *, interactive, source_duration_seconds=None):
+    def fake_run(argv, *, interactive, source_duration_seconds=None, allow_stdin_cancel=True):
         _ = interactive, source_duration_seconds
         from meg.exec import ExecutionResult
 
@@ -532,7 +532,7 @@ def test_generate_run_warns_and_injects_y_for_existing_output(
 
     captured: list[tuple[str, ...]] = []
 
-    def fake_run(argv, *, interactive, source_duration_seconds=None):
+    def fake_run(argv, *, interactive, source_duration_seconds=None, allow_stdin_cancel=True):
         _ = interactive, source_duration_seconds
         captured.append(tuple(argv))
         from meg.exec import ExecutionResult
@@ -551,3 +551,58 @@ def test_generate_run_warns_and_injects_y_for_existing_output(
     assert captured
     assert captured[0][1] == "-nostdin"
     assert captured[0][2] == "-y"
+
+
+def test_generate_shows_preflight_warning_for_remux_with_reencode(monkeypatch) -> None:
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            _ = system, user
+            return "\n".join(
+                [
+                    "COMMAND:",
+                    "ffmpeg -i input.mkv -c:v libx264 -c:a copy output.mp4",
+                    "EXPLANATION:",
+                    "- Re-encodes video to H.264.",
+                ]
+            )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: True)
+
+    result = runner.invoke(
+        app,
+        ["remux only — copy all streams to mp4"],
+        input="q\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Pre-flight:" in result.stdout
+    assert "re-encodes video" in result.stdout
+
+
+def test_generate_blocks_run_on_preflight_error(monkeypatch) -> None:
+    class FakeProvider:
+        def complete(self, system: str, user: str) -> str:
+            _ = system, user
+            return "\n".join(
+                [
+                    "COMMAND:",
+                    "ffmpeg -i input.mkv -vf scale=1920:1080 -c copy output.mp4",
+                    "EXPLANATION:",
+                    "- Scales and copies streams.",
+                ]
+            )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("meg.cli.create_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr("meg.cli._stdin_is_interactive", lambda: True)
+
+    result = runner.invoke(app, ["scale to 1080p"], input="r\nq\n")
+
+    assert result.exit_code == 0
+    assert "Pre-flight:" in result.stdout
+    assert "video filters" in result.stderr.lower() or "video filters" in result.stdout.lower()
+    assert "Fix pre-flight errors" in result.stderr
+    assert "Running:" not in result.stdout
+

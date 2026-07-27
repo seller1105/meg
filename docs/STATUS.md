@@ -26,8 +26,11 @@ Open-source CLI: plain English → FFmpeg command + explanation, or `--explain` 
 | 6 Ship | Ready | MIT `LICENSE`, README; GitHub `origin` on `main`; wheel/sdist verified; PyPI + tag pending |
 | 7 Source-aware generate | Done | `meg/ffprobe.py` — path detect, guarded probe, prompt injection, probe cache |
 | 8 Command execution | Done | `meg/exec.py` — argv exec, safety checks, managed encodes, run/edit/exit loop |
+| 11 (partial) Pre-flight validation | Done (uncommitted) | `meg/preflight.py` — command sanity checks before execution |
+| 12 (partial) Preset vault | Done (uncommitted) | `meg/presets.py` — save/nickname/search/run presets, `~/.meg/presets.toml` |
+| 14 (partial) Interactive REPL | Done (uncommitted) | Bare `meg` opens a conversational session; save presets from the loop |
 
-**Tests:** `pytest` — **107 passed**, 1 skipped (mocked providers + ffprobe + exec + progress; no live API in CI).
+**Tests:** `pytest` — **159+ passed**, 1 skipped (mocked providers + ffprobe + exec + progress + preflight + presets + REPL; no live API in CI).
 
 ---
 
@@ -88,6 +91,8 @@ pytest
 | `meg/ffprobe.py` | Path extraction, `can_probe()`, probe cache, ffprobe subprocess, JSON summary |
 | `meg/exec.py` | argv parse/validate, output safety, managed ffmpeg execution, failure summary |
 | `meg/prompt.py` | System prompts, builders, parsers (`COMMAND:` / `EXPLANATION:` schema) |
+| `meg/preflight.py` | Pre-flight sanity checks on generated commands before execution |
+| `meg/presets.py` | Preset vault: templatized commands with `{input}`/`{output}` placeholders |
 | `meg/config.py` | Env + TOML config, provider resolution |
 | `meg/providers/` | `AIProvider`, Anthropic, OpenAI, `create_provider()` |
 | `scripts/run_qa_suite.py` | Runs G1–G15 + E1–E8 against live API → `docs/qa-run.json` |

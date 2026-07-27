@@ -12,6 +12,7 @@ import typer
 from meg.config import ConfigError, load_config
 from meg.exec import (
     CommandValidationError,
+    _is_concrete_output_path,
     ExecutionResult,
     FfmpegSafetyReport,
     analyze_ffmpeg_safety,
@@ -40,14 +41,57 @@ from meg.prompt import (
     parse_explain_response,
     parse_generate_response,
 )
+from meg.preflight import (
+    PreflightFinding,
+    has_preflight_errors,
+    preflight_from_command,
+)
+from meg.presets import (
+    Preset,
+    PresetError,
+    add_preset,
+    delete_preset,
+    get_preset,
+    load_presets,
+    render_preset_command,
+    search_presets,
+)
 from meg.providers import create_provider
 from meg.providers.base import AIProvider
+
+class _MegGroup(typer.core.TyperGroup):
+    """Give subcommands priority over the optional [REQUEST] argument.
+
+    Without this, ``meg preset list`` parses ``preset`` as the generate
+    request instead of routing to the subcommand.
+    """
+
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        if args and args[0] in self.commands:
+            original = self.params
+            self.params = [p for p in original if p.name != "request"]
+            try:
+                result = super().parse_args(ctx, args)
+            finally:
+                self.params = original
+            ctx.params.setdefault("request", None)
+            return result
+        return super().parse_args(ctx, args)
+
 
 app = typer.Typer(
     name="meg",
     help="AI-powered FFmpeg assistant for the terminal.",
+    no_args_is_help=False,
+    cls=_MegGroup,
+)
+
+preset_app = typer.Typer(
+    name="preset",
+    help="Save, search, and reuse ffmpeg commands from your preset vault.",
     no_args_is_help=True,
 )
+app.add_typer(preset_app)
 
 _read_line: Callable[[], str] = input
 
@@ -133,9 +177,9 @@ def _stdin_is_interactive() -> bool:
 
 
 def _prompt_run_edit_exit() -> str:
-    """Return ``run``, ``edit``, or ``exit`` from the post-explain menu."""
+    """Return ``run``, ``edit``, ``save``, or ``exit`` from the post-explain menu."""
     _echo("")
-    _echo("[r]un  [e]dit  [q]uit")
+    _echo("[r]un  [e]dit  [s]ave preset  [q]uit")
     while True:
         try:
             raw = _read_line().strip().lower()
@@ -145,9 +189,35 @@ def _prompt_run_edit_exit() -> str:
             return "run"
         if raw in {"e", "edit"}:
             return "edit"
+        if raw in {"s", "save"}:
+            return "save"
         if raw in {"q", "quit", "exit"}:
             return "exit"
-        _echo("Enter r (run), e (edit), or q (quit).")
+        _echo("Enter r (run), e (edit), s (save preset), or q (quit).")
+
+
+def _prompt_save_preset(command: str) -> None:
+    """Interactively save the current command to the preset vault."""
+    _echo("")
+    _echo("Nickname for this preset (blank to cancel):")
+    try:
+        nickname = _read_line().strip()
+    except EOFError:
+        return
+    if not nickname:
+        return
+    _echo("Optional description (blank for none):")
+    try:
+        description = _read_line().strip()
+    except EOFError:
+        description = ""
+    try:
+        preset = add_preset(nickname, command, description=description)
+    except PresetError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        return
+    _echo(f"Saved preset '{preset.nickname}': {preset.display}")
+    _echo(f"Reuse it with: meg preset run {preset.nickname} <input-file>")
 
 
 def _prompt_revision_feedback() -> str:
@@ -352,7 +422,14 @@ def _run_approved_argv(
     *,
     interactive: bool,
     source_duration_seconds: float | None = None,
+    allow_stdin_cancel: bool = True,
 ) -> ExecutionResult:
+    """Run an approved argv.
+
+    ``allow_stdin_cancel`` must be False inside the REPL: the q-to-cancel
+    listener blocks on stdin and would otherwise swallow the next line the
+    user types at the ``meg>`` prompt after the encode finishes.
+    """
     if _executable_basename(argv[0]) != "ffmpeg":
         return run_command(argv)
 
@@ -362,9 +439,12 @@ def _run_approved_argv(
         duration_seconds=source_duration_seconds,
         use_tty=interactive and _stdout_is_interactive(),
     )
-    if interactive:
+    use_listener = interactive and allow_stdin_cancel
+    if use_listener:
         _echo("Press q to cancel, Ctrl+C to interrupt.")
         listener = _start_cancel_listener(cancel_event)
+    elif interactive:
+        _echo("Press Ctrl+C to interrupt.")
 
     progress.start()
     try:
@@ -372,7 +452,7 @@ def _run_approved_argv(
             argv,
             stall_timeout_s=exec_stall_timeout_s(),
             on_progress=progress.update if interactive else None,
-            should_cancel=(lambda: cancel_event.is_set()) if interactive else None,
+            should_cancel=(lambda: cancel_event.is_set()) if use_listener else None,
             on_interrupt=_prompt_cancel_encode if interactive else None,
         )
     finally:
@@ -405,12 +485,44 @@ def _prompt_confirm_run(command: str, *, existing_outputs: tuple[str, ...] = ())
         _echo("Enter y (yes) or n (no).")
 
 
-def _execute_approved_command(command: str) -> bool:
+def _print_preflight_findings(findings: tuple[PreflightFinding, ...]) -> None:
+    """Show pre-flight warnings and errors after a generated command."""
+    if not findings:
+        return
+    _echo("")
+    _echo("Pre-flight:")
+    for finding in findings:
+        if finding.severity == "error":
+            typer.secho(f"  Error: {finding.message}", fg=typer.colors.RED, err=True)
+        else:
+            typer.secho(f"  Warning: {finding.message}", fg=typer.colors.YELLOW)
+
+
+def _execute_approved_command(
+    command: str,
+    *,
+    user_request: str | None = None,
+    probed_paths: list[str] | None = None,
+    allow_stdin_cancel: bool = True,
+) -> bool:
     """Parse, validate, and run an approved ffmpeg/ffprobe command.
 
     Returns True on success. On validation or execution failure, prints a
     message and returns False so the user can edit or retry.
     """
+    preflight = preflight_from_command(
+        command,
+        user_request=user_request,
+        probed_paths=probed_paths,
+    )
+    if has_preflight_errors(preflight):
+        typer.secho(
+            "Pre-flight errors must be fixed before running. Choose edit to revise the command.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        return False
+
     safety = None
     try:
         parsed = parse_command_line(command)
@@ -453,8 +565,19 @@ def _execute_approved_command(command: str) -> bool:
         argv,
         interactive=_stdin_is_interactive(),
         source_duration_seconds=source_duration,
+        allow_stdin_cancel=allow_stdin_cancel,
     )
     if result.returncode == 0:
+        done_paths = [
+            path
+            for path in (safety.output_paths if safety is not None else ())
+            if _is_concrete_output_path(path)
+        ]
+        if done_paths:
+            for path in done_paths:
+                _echo(f"Done: {path}")
+        else:
+            _echo("Done.")
         return True
 
     _warn_incomplete_output(safety, result)
@@ -504,10 +627,16 @@ def _run_generate_confirm_loop(
     request: str,
     verbose: bool,
     source_context: str | None,
-) -> None:
-    """Generate → explain → run | edit | exit until the user is done."""
+    allow_stdin_cancel: bool = True,
+) -> str | None:
+    """Generate → explain → run | edit | save | exit until the user is done.
+
+    Returns the last generated command (for callers such as the REPL that
+    let the user save it as a preset afterwards), or None on parse failure.
+    """
     previous_command: str | None = None
     feedback: str | None = None
+    probed_paths = extract_media_paths(request)
 
     while True:
         try:
@@ -530,25 +659,381 @@ def _run_generate_confirm_loop(
             _exit_provider_error(exc)
 
         _echo(command)
+        preflight = preflight_from_command(
+            command,
+            user_request=request,
+            probed_paths=probed_paths,
+        )
+        _print_preflight_findings(preflight)
         _echo("")
         _echo(explanation)
 
         if not _stdin_is_interactive():
-            return
+            return command
 
         while True:
             choice = _prompt_run_edit_exit()
             if choice == "exit":
-                return
+                return command
             if choice == "edit":
                 break
+            if choice == "save":
+                _prompt_save_preset(command)
+                continue
             if choice == "run":
-                if _execute_approved_command(command):
-                    return
+                if has_preflight_errors(preflight):
+                    typer.secho(
+                        "Fix pre-flight errors before running (choose edit).",
+                        fg=typer.colors.RED,
+                        err=True,
+                    )
+                    continue
+                if _execute_approved_command(
+                    command,
+                    user_request=request,
+                    probed_paths=probed_paths,
+                    allow_stdin_cancel=allow_stdin_cancel,
+                ):
+                    return command
                 continue
 
         feedback = _prompt_revision_feedback()
         previous_command = command
+
+
+def _explain_once(
+    ai_provider: AIProvider,
+    command: str,
+    *,
+    verbose: bool,
+) -> None:
+    """Run one explain request and print the result."""
+    try:
+        source_context = build_source_context(extract_ffmpeg_input_paths(command))
+        prompt = build_explain_prompt(
+            command=command,
+            verbose=verbose,
+            source_context=source_context,
+        )
+        raw_response = ai_provider.complete(prompt.system, prompt.user)
+        parsed = parse_explain_response(raw_response)
+    except PromptParseError as exc:
+        typer.secho(
+            f"Could not parse model output: {exc}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        _exit_provider_error(exc)
+
+    _echo(parsed.explanation)
+
+
+def _format_preset_line(preset: Preset) -> str:
+    """One-line vault listing: nickname, description, command."""
+    description = f" — {preset.description}" if preset.description else ""
+    return f"{preset.nickname}{description}\n    {preset.display}"
+
+
+def _run_preset_by_nickname(
+    nickname: str,
+    inputs: list[str],
+    *,
+    allow_stdin_cancel: bool = True,
+) -> bool:
+    """Render a preset against real input files and run the approval flow."""
+    try:
+        preset = get_preset(nickname)
+        command = render_preset_command(preset, inputs)
+    except PresetError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        return False
+
+    _echo(f"Preset '{preset.nickname}':")
+    _echo(command)
+    preflight = preflight_from_command(command, probed_paths=list(inputs))
+    _print_preflight_findings(preflight)
+    if has_preflight_errors(preflight):
+        typer.secho(
+            "Pre-flight errors must be fixed before running.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        return False
+    return _execute_approved_command(
+        command,
+        probed_paths=list(inputs),
+        allow_stdin_cancel=allow_stdin_cancel,
+    )
+
+
+_REPL_HELP = """Commands:
+  <plain-English request>          generate an ffmpeg command
+  explain <ffmpeg command>         explain an existing command
+  save <nickname> [description]   save the last generated command as a preset
+  presets                          list saved presets
+  preset search <text>            search the preset vault
+  preset run <nickname> <file>    apply a preset to a new input file
+  preset delete <nickname>        remove a preset
+  help                             show this help
+  exit                             leave the session"""
+
+
+def _handle_repl_preset_command(raw: str) -> None:
+    """Dispatch ``preset ...`` / ``presets`` lines typed inside the REPL.
+
+    Anything that starts with ``preset`` is handled here — incomplete or
+    unknown subcommands get a usage message rather than falling through to
+    the AI generator.
+    """
+    import shlex as _shlex
+
+    try:
+        tokens = _shlex.split(raw, posix=True)
+    except ValueError as exc:
+        typer.secho(f"Could not parse input: {exc}", fg=typer.colors.RED, err=True)
+        return
+
+    sub = tokens[1].lower() if len(tokens) > 1 else "list"
+    # Drop PowerShell call-operator artifacts from pasted commands.
+    args = [token for token in tokens[2:] if token != "&"]
+
+    if tokens[0].lower() == "presets" and len(tokens) == 1:
+        sub, args = "list", []
+
+    if sub == "list":
+        presets = load_presets()
+        if not presets:
+            _echo("No presets saved yet. Use 'save <nickname>' after generating.")
+        for nickname in sorted(presets):
+            _echo(_format_preset_line(presets[nickname]))
+        return
+
+    if sub == "search":
+        if not args:
+            _echo("Usage: preset search <text>")
+            return
+        results = search_presets(" ".join(args))
+        if not results:
+            _echo("No presets matched.")
+        for preset in results:
+            _echo(_format_preset_line(preset))
+        return
+
+    if sub == "delete":
+        if len(args) != 1:
+            _echo("Usage: preset delete <nickname>")
+            return
+        try:
+            delete_preset(args[0])
+            _echo("Preset deleted.")
+        except PresetError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        return
+
+    if sub == "run":
+        if len(args) < 2:
+            _echo("Usage: preset run <nickname> <input-file>")
+            return
+        _run_preset_by_nickname(args[0], args[1:], allow_stdin_cancel=False)
+        return
+
+    if sub == "save":
+        _echo(
+            "Inside the session, use 'save <nickname>' after generating a "
+            "command. (meg preset save works from the shell.)"
+        )
+        return
+
+    _echo(f"Unknown preset command '{sub}'. Type 'help' for commands.")
+
+
+def _run_repl(
+    *,
+    provider_override: str | None,
+    model_override: str | None,
+    verbose: bool,
+) -> None:
+    """Interactive conversational session on bare ``meg``."""
+    _echo("meg — interactive session. Type a request, 'help', or 'exit'.")
+    ai_provider: AIProvider | None = None
+    last_command: str | None = None
+
+    def ensure_provider() -> AIProvider | None:
+        nonlocal ai_provider
+        if ai_provider is not None:
+            return ai_provider
+        try:
+            config = load_config()
+            ai_provider = create_provider(
+                config,
+                override=provider_override,
+                model_override=model_override,
+            )
+        except ConfigError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            return None
+        return ai_provider
+
+    while True:
+        try:
+            sys.stdout.write("meg> ")
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            return
+        try:
+            raw = _read_line().strip()
+        except (EOFError, KeyboardInterrupt):
+            _echo("")
+            return
+
+        if not raw:
+            continue
+
+        # Users often paste shell-style commands ("meg preset run ...",
+        # PowerShell's "& 'path'") into the session; normalize them.
+        if raw.lower() == "meg" or raw.lower().startswith("meg "):
+            raw = raw[3:].strip()
+            if not raw:
+                continue
+        lowered = raw.lower()
+
+        if lowered in {"exit", "quit", "q"}:
+            return
+        if lowered in {"help", "?", "--help", "-h"}:
+            _echo(_REPL_HELP)
+            continue
+
+        if lowered == "presets" or lowered == "preset" or lowered.startswith("preset "):
+            _handle_repl_preset_command(raw)
+            continue
+
+        if lowered.startswith("save"):
+            parts = raw.split(None, 2)
+            if last_command is None:
+                _echo("Nothing to save yet — generate a command first.")
+                continue
+            if len(parts) < 2:
+                _echo("Usage: save <nickname> [description]")
+                continue
+            description = parts[2] if len(parts) > 2 else ""
+            try:
+                preset = add_preset(parts[1], last_command, description=description)
+                _echo(f"Saved preset '{preset.nickname}': {preset.display}")
+            except PresetError as exc:
+                typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            continue
+
+        if lowered.startswith("explain "):
+            command = raw[len("explain "):].strip()
+            if "ffmpeg" not in command.lower():
+                _echo("Explain input should include an ffmpeg command.")
+                continue
+            provider = ensure_provider()
+            if provider is None:
+                continue
+            try:
+                _explain_once(provider, command, verbose=verbose)
+            except typer.Exit:
+                pass
+            continue
+
+        provider = ensure_provider()
+        if provider is None:
+            continue
+        source_context = build_source_context(extract_media_paths(raw))
+        try:
+            result = _run_generate_confirm_loop(
+                provider,
+                request=raw,
+                verbose=verbose,
+                source_context=source_context,
+                allow_stdin_cancel=False,
+            )
+        except typer.Exit:
+            continue
+        except Exception as exc:
+            typer.secho(_format_provider_error(exc), fg=typer.colors.RED, err=True)
+            continue
+        if result is not None:
+            last_command = result
+            _echo("")
+            _echo("Type 'save <nickname>' to keep this command, or enter a new request.")
+
+
+@preset_app.command("save")
+def preset_save(
+    nickname: str = typer.Argument(..., help="Short name to recall the preset by."),
+    command: str = typer.Argument(..., help="Full ffmpeg command to save."),
+    description: str = typer.Option("", "--description", "-d", help="Searchable note."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing preset."),
+) -> None:
+    """Save an ffmpeg command as a reusable preset."""
+    _configure_terminal_utf8()
+    try:
+        preset = add_preset(
+            nickname,
+            command,
+            description=description,
+            overwrite=overwrite,
+        )
+    except PresetError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    _echo(f"Saved preset '{preset.nickname}': {preset.display}")
+    _echo(f"Reuse it with: meg preset run {preset.nickname} <input-file>")
+
+
+@preset_app.command("list")
+def preset_list() -> None:
+    """List all saved presets."""
+    _configure_terminal_utf8()
+    presets = load_presets()
+    if not presets:
+        _echo("No presets saved yet. Save one with: meg preset save <nickname> \"<command>\"")
+        return
+    for nickname in sorted(presets):
+        _echo(_format_preset_line(presets[nickname]))
+
+
+@preset_app.command("search")
+def preset_search(
+    query: str = typer.Argument(..., help="Text to match against nickname, description, or command."),
+) -> None:
+    """Search the preset vault."""
+    _configure_terminal_utf8()
+    results = search_presets(query)
+    if not results:
+        _echo("No presets matched.")
+        raise typer.Exit(code=1)
+    for preset in results:
+        _echo(_format_preset_line(preset))
+
+
+@preset_app.command("delete")
+def preset_delete(
+    nickname: str = typer.Argument(..., help="Preset to remove."),
+) -> None:
+    """Delete a preset from the vault."""
+    _configure_terminal_utf8()
+    try:
+        delete_preset(nickname)
+    except PresetError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    _echo(f"Deleted preset '{nickname.strip()}'.")
+
+
+@preset_app.command("run")
+def preset_run(
+    nickname: str = typer.Argument(..., help="Preset to apply."),
+    inputs: list[str] = typer.Argument(..., help="Input media file(s) for this run."),
+) -> None:
+    """Apply a preset to new input file(s) and run it after approval."""
+    _configure_terminal_utf8()
+    if not _run_preset_by_nickname(nickname, list(inputs)):
+        raise typer.Exit(code=1)
 
 
 @app.callback(invoke_without_command=True)
@@ -618,6 +1103,14 @@ def main(
         raise typer.Exit(code=1)
 
     if explain is None and request is None:
+        if _stdin_is_interactive():
+            _run_repl(
+                provider_override=provider,
+                model_override=model,
+                verbose=verbose,
+            )
+        else:
+            _echo(ctx.get_help())
         return
 
     try:

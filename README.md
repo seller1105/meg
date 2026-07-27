@@ -103,6 +103,16 @@ meg --model claude-sonnet-4-5 "convert mkv to h264 mp4"
 
 # Path-based request — Meg ffprobes the file and tailors the command to real source specs
 meg "convert `"D:\renders\master.mov`" to UHD 23.98 fps"
+
+# Interactive session (REPL) — just run meg with no arguments
+meg
+
+# Preset vault — save a command once, reuse it on any file later
+meg preset save proxy-1080 "ffmpeg -i input.mov -vf scale=-2:1080 -c:v libx264 -crf 20 -c:a aac out.mp4" -d "1080p editorial proxy"
+meg preset run proxy-1080 "D:\renders\new shot.mov"
+meg preset list
+meg preset search proxy
+meg preset delete proxy-1080
 ```
 
 **Default output (generate):** one `ffmpeg` line, blank line, then a short bullet explanation.
@@ -117,7 +127,11 @@ meg "convert `"D:\renders\master.mov`" to UHD 23.98 fps"
 
 Probing is skipped for missing paths, network (UNC) paths, unreadable files, files over 50 GiB, or if ffprobe is not installed. ffprobe runs via argv (no shell) with a 30s timeout. **Probe results are cached** per file (path + mtime + size) for the lifetime of the process, so edit/revise turns and repeat lookups do not re-run ffprobe.
 
-**Run generated commands (interactive):** after generate, Meg offers `[r]un  [e]dit  [q]uit`:
+**Interactive session (REPL):** bare `meg` on a terminal opens a conversational session. Type requests in plain English, refine with edit feedback, `explain <command>`, and `save <nickname>` the last generated command as a preset. `help` lists all session commands.
+
+**Preset vault:** `meg preset save/list/search/run/delete` manages reusable commands in `~/.meg/presets.toml`. Input and output paths are templatized on save, so `meg preset run <nickname> <file>` applies the same encode settings to any source file — the output path is re-derived beside the new input (extension preserved from the preset). Presets can also be saved from the post-generate menu (`[s]ave`) or from the REPL. Preset runs go through the same pre-flight checks and per-command approval as generated commands.
+
+**Run generated commands (interactive):** after generate, Meg offers `[r]un  [e]dit  [s]ave preset  [q]uit`:
 
 - **Per-command approval** — choosing run shows the full command and asks `[y]es / [n]o`; each revised command requires fresh approval
 - **Safety checks** — refuses input=output paths; warns and confirms before overwriting an existing output file; strips model-supplied `-y` (Meg adds it only after you confirm overwrite)
