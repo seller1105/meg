@@ -103,7 +103,7 @@ pytest
 
 ## QA results (latest full suite)
 
-Captured in [qa-run.json](qa-run.json) (live API run after Phase 4 prompt hardening). Path-based / ffprobe-aware prompts not yet in the G1–G15 suite — add manual QA for real-file workflows.
+Captured in [qa-run.json](qa-run.json) (live API run after Phase 4 prompt hardening). Path-based P1–P6 cases added: `run_qa_suite.py` builds synthetic media (ProRes master with a space in the filename, 23.976 H.264 clip, dual-audio MKV) into `.qa-media/` via `scripts/make_qa_media.py` (ffmpeg on PATH required; skipped otherwise) and exercises probe-context generate + explain against real files. Rubric checks in `summarize_qa.py` verify the exact source path, `_out` default output, and probed facts cited in explanations.
 
 ### Generate G1–G15
 

@@ -29,6 +29,18 @@ RUBRIC: dict[str, list[str]] = {
     "G13": ["-an"],
     "G14": ["-map"],
     "G15": ["crop"],
+    # Path-based P-cases: command must reference the probed .qa-media path
+    # and the derived _out output.
+    "P1": [".qa-media", "_out", "libx264", "aac"],
+    "P2": [".qa-media", "_out", "1920"],
+    "P3": [".qa-media", "_out", "copy"],
+    "P4": [".qa-media", "_out", "-map", "pcm_s24le"],
+    "P5": [".qa-media", "_out", "3840"],
+}
+
+# Explain-mode rubric: keywords expected in the explanation text (probed facts).
+RUBRIC_TEXT: dict[str, list[str]] = {
+    "P6": ["prores", "1920x1080"],
 }
 
 for r in DATA:
@@ -40,9 +52,14 @@ for r in DATA:
         lines = (r.get("stdout") or "").strip().splitlines()
         cmd_line = lines[0] if lines else ""
     checks = RUBRIC.get(cid, [])
+    text_checks = RUBRIC_TEXT.get(cid, [])
     if r["mode"] == "generate" and cmd_line:
         hits = [c for c in checks if c.lower() in cmd_line.lower()]
         miss = [c for c in checks if c.lower() not in cmd_line.lower()]
+        rubric = f"hits={hits} miss={miss}"
+    elif r["mode"] == "explain" and text_checks:
+        hits = [c for c in text_checks if c.lower() in text.lower()]
+        miss = [c for c in text_checks if c.lower() not in text.lower()]
         rubric = f"hits={hits} miss={miss}"
     else:
         rubric = "n/a"

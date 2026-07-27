@@ -1,6 +1,9 @@
-"""Run roadmap G1–G15 and E1–E8 prompts; write results to docs/qa-run.json.
+"""Run roadmap G1–G15, E1–E8, and path-based P1–P6 prompts; write results to docs/qa-run.json.
 
 Requires ANTHROPIC_API_KEY or OPENAI_API_KEY in the environment.
+P-cases need ffmpeg on PATH (synthetic media is built into .qa-media/ on
+first run via scripts/make_qa_media.py); they are skipped with a warning
+when ffmpeg is missing.
 See docs/STATUS.md for how to interpret results.
 """
 
@@ -12,6 +15,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from make_qa_media import MEDIA_DIR, ensure_qa_media
 
 ROOT = Path(__file__).resolve().parents[1]
 MEG = ROOT / ".venv" / "Scripts" / "meg.exe"
@@ -48,6 +53,30 @@ EXPLAIN: list[tuple[str, str]] = [
     ("E7", "ffmpeg -i in.mp4 -af loudnorm=I=-23:TP=-1:LRA=7 out.mp4"),
     ("E8", "ffmpeg -i in.mp4 -hwaccel cuda -c:v h264_nvenc out.mp4"),
 ]
+
+
+def _pathbased_cases() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """P-suite: generate/explain prompts that reference real local media.
+
+    Returns (generate_cases, explain_cases). Paths point into .qa-media/ so
+    Meg's ffprobe context injection is exercised end to end, including a
+    filename with spaces.
+    """
+    master = MEDIA_DIR / "qa master 1080p25.mov"   # ProRes 422, space in name
+    clip = MEDIA_DIR / "clip_720p2398.mp4"          # H.264 23.976
+    two_audio = MEDIA_DIR / "two_audio.mkv"         # 1 video + 2 audio tracks
+
+    generate = [
+        ("P1", f'Convert "{master}" to H.264 MP4 with AAC audio'),
+        ("P2", f'Scale "{clip}" to 1920x1080, change nothing else'),
+        ("P3", f'Remux "{master}" to MP4 container only, no re-encode'),
+        ("P4", f'Extract the second audio track of "{two_audio}" as 24-bit WAV'),
+        ("P5", f'Convert "{master}" to UHD 23.98 fps'),
+    ]
+    explain = [
+        ("P6", f'ffmpeg -i "{master}" -c copy out.mp4'),
+    ]
+    return generate, explain
 
 
 def _ensure_api_key() -> None:
@@ -126,6 +155,20 @@ def main() -> int:
     for case_id, command in EXPLAIN:
         print(f"Running {case_id} (explain)...", flush=True)
         results.append(_run_explain(case_id, command))
+
+    if ensure_qa_media() is None:
+        print(
+            "Skipping path-based P-cases (ffmpeg not available to build QA media).",
+            file=sys.stderr,
+        )
+    else:
+        path_generate, path_explain = _pathbased_cases()
+        for case_id, prompt in path_generate:
+            print(f"Running {case_id} (generate, path-based)...", flush=True)
+            results.append(_run_generate(case_id, prompt))
+        for case_id, command in path_explain:
+            print(f"Running {case_id} (explain, path-based)...", flush=True)
+            results.append(_run_explain(case_id, command))
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(results, indent=2), encoding="utf-8")
