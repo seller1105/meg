@@ -464,9 +464,9 @@ class _LiveProgressDisplay:
         else:
             _echo_line(status)
 
-    def finish(self) -> None:
+    def finish(self, *, complete: bool = False) -> None:
         if self._rich is not None:
-            self._rich.finish()
+            self._rich.finish(complete=complete)
             self._rich = None
             self._active = False
             return
@@ -532,16 +532,25 @@ def _run_approved_argv(
         _echo("Press Ctrl+C to interrupt.")
 
     progress.start()
+    result: ExecutionResult | None = None
     try:
-        return run_managed_command(
+        result = run_managed_command(
             argv,
             stall_timeout_s=exec_stall_timeout_s(),
             on_progress=progress.update if interactive else None,
             should_cancel=(lambda: cancel_event.is_set()) if use_listener else None,
             on_interrupt=_prompt_cancel_encode if interactive else None,
         )
+        return result
     finally:
-        progress.finish()
+        progress.finish(
+            complete=(
+                result is not None
+                and result.returncode == 0
+                and not result.cancelled
+                and not result.stalled
+            )
+        )
         if listener is not None:
             cancel_event.set()
             listener.join(timeout=0.2)

@@ -119,8 +119,21 @@ class EncodeProgress:
         else:
             self._progress.update(self._task_id, detail=detail)
 
-    def finish(self) -> None:
+    def finish(self, *, complete: bool = False) -> None:
+        """Stop rendering. ``complete=True`` fills the bar to 100% first.
+
+        Short encodes often end before ffmpeg emits a final progress line
+        (or emit none at all), so on success the caller should pass
+        ``complete=True``; on cancel/stall/failure the bar stays where the
+        last real update left it.
+        """
         if self._progress is not None:
+            if (
+                complete
+                and self._task_id is not None
+                and self._duration is not None
+            ):
+                self._progress.update(self._task_id, completed=self._duration)
             self._progress.stop()
             self._progress = None
             self._task_id = None

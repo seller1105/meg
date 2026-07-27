@@ -92,6 +92,50 @@ def test_encode_progress_without_duration_shows_detail(
     assert "time=00:00:04.00" in output
 
 
+def test_encode_progress_finish_complete_fills_bar(
+    tty_console: io.StringIO,
+) -> None:
+    # Short encodes: last ffmpeg progress line lands well before the end.
+    progress = ui.EncodeProgress(10.0)
+    progress.start()
+    progress.update(2.4, "speed=357x")
+    progress.finish(complete=True)
+    assert "100%" in tty_console.getvalue()
+
+
+def test_encode_progress_finish_complete_with_no_updates(
+    tty_console: io.StringIO,
+) -> None:
+    # Sub-second encodes may emit no progress lines at all.
+    progress = ui.EncodeProgress(1.0)
+    progress.start()
+    progress.finish(complete=True)
+    assert "100%" in tty_console.getvalue()
+
+
+def test_encode_progress_finish_incomplete_keeps_partial_bar(
+    tty_console: io.StringIO,
+) -> None:
+    # Cancel/stall/failure must not pretend the encode completed.
+    progress = ui.EncodeProgress(10.0)
+    progress.start()
+    progress.update(2.4, "speed=1x")
+    progress.finish()
+    output = tty_console.getvalue()
+    assert "24%" in output
+    assert "100%" not in output
+
+
+def test_live_progress_display_finish_complete_fills_bar(
+    tty_console: io.StringIO,
+) -> None:
+    display = cli._LiveProgressDisplay(duration_seconds=60.0, use_tty=True)
+    display.start()
+    display.update("frame= 1 fps=1 time=00:00:30.00 speed=1x")
+    display.finish(complete=True)
+    assert "100%" in tty_console.getvalue()
+
+
 def test_live_progress_display_uses_rich_on_tty(
     tty_console: io.StringIO,
 ) -> None:
