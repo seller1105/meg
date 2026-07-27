@@ -2,7 +2,7 @@
 
 > **Read this first** in a new chat session. Product intent: [VISION.md](../VISION.md). Milestones: [v0.1-roadmap.md](v0.1-roadmap.md).
 
-**Last updated:** June 2026  
+**Last updated:** July 2026 (Rich terminal UI)  
 **Version:** `0.2.0` (source-aware generate + safe in-terminal execution; PyPI upload pending)
 
 ---
@@ -22,7 +22,7 @@ Open-source CLI: plain English → FFmpeg command + explanation, or `--explain` 
 | 2 Generate loop | Done | `build_generate_prompt`, `parse_generate_response`, wired in `cli.py` |
 | 3 Explain mode | Done | `build_explain_prompt`, `parse_explain_response`, `--explain` wired |
 | 4 Prompt hardening | Done | Guardrails in `SYSTEM_PROMPT_GENERATE`; G4/G11/G14 pass content review |
-| 5 CLI polish | Done | UTF-8 stdout, actionable API errors, 60s provider timeouts |
+| 5 CLI polish | Done | UTF-8 stdout, actionable API errors, 60s provider timeouts; Rich terminal UI (spinner, command panel, encode progress bar, preset table — plain fallback when piped) |
 | 6 Ship | Ready | MIT `LICENSE`, README; GitHub `origin` on `main`; wheel/sdist verified; PyPI + tag pending |
 | 7 Source-aware generate | Done | `meg/ffprobe.py` — path detect, guarded probe, prompt injection, probe cache |
 | 8 Command execution | Done | `meg/exec.py` — argv exec, safety checks, managed encodes, run/edit/exit loop |
@@ -31,7 +31,7 @@ Open-source CLI: plain English → FFmpeg command + explanation, or `--explain` 
 | 14 (partial) Interactive REPL | Done (uncommitted) | Bare `meg` opens a conversational session; save presets from the loop |
 | 11 (partial) Error Interpreter | Done | `[f]ix with AI` after failed runs — diagnosis + corrected command via `SYSTEM_PROMPT_INTERPRET` |
 
-**Tests:** `pytest` — **159+ passed**, 1 skipped (mocked providers + ffprobe + exec + progress + preflight + presets + REPL; no live API in CI).
+**Tests:** `pytest` — **198+ passed**, 1 skipped (mocked providers + ffprobe + exec + progress + preflight + presets + REPL; no live API in CI).
 
 ---
 

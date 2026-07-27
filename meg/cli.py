@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Callable, NoReturn, Optional
 
 import typer
+from meg import ui
 from meg.config import ConfigError, load_config, load_env_files
 from meg.exec import (
     CommandValidationError,
@@ -149,6 +150,25 @@ def _echo(text: str) -> None:
         typer.echo(text)
     except UnicodeEncodeError:
         sys.stdout.buffer.write((text + "\n").encode("utf-8", errors="replace"))
+
+
+def _show_command(command: str) -> None:
+    """Display a generated command: Rich panel on a TTY, plain line otherwise."""
+    if ui.rich_active():
+        ui.print_command_panel(command)
+    else:
+        _echo(command)
+
+
+def _print_preset_collection(presets: list[Preset]) -> None:
+    """Display presets: Rich table on a TTY, plain lines otherwise."""
+    if ui.rich_active():
+        ui.print_preset_table(
+            [(p.nickname, p.description, p.display) for p in presets]
+        )
+        return
+    for preset in presets:
+        _echo(_format_preset_line(preset))
 
 
 def _format_provider_error(exc: Exception) -> str:
@@ -357,17 +377,23 @@ def _format_clock(seconds: float) -> str:
     return f"{minutes}:{secs:06.3f}"
 
 
+def _extract_progress_fields(line: str) -> dict[str, str]:
+    """Pull frame/fps/time/speed/bitrate tokens from an ffmpeg stderr line."""
+    fields: dict[str, str] = {}
+    for match in _FFMPEG_PROGRESS_FIELD.finditer(line):
+        for key, value in match.groupdict().items():
+            if value is not None:
+                fields[key] = value
+    return fields
+
+
 def _format_progress_status(
     line: str,
     *,
     duration_seconds: float | None = None,
 ) -> str:
     """Turn an ffmpeg stderr progress line into a short status string."""
-    fields: dict[str, str] = {}
-    for match in _FFMPEG_PROGRESS_FIELD.finditer(line):
-        for key, value in match.groupdict().items():
-            if value is not None:
-                fields[key] = value
+    fields = _extract_progress_fields(line)
 
     parts = ["Encoding…"]
     if "time" in fields:
@@ -403,11 +429,32 @@ class _LiveProgressDisplay:
         self._duration_seconds = duration_seconds
         self._use_tty = use_tty
         self._active = False
+        self._rich: ui.EncodeProgress | None = None
 
     def start(self) -> None:
         self._active = self._use_tty
+        if self._use_tty and ui.rich_active():
+            self._rich = ui.EncodeProgress(self._duration_seconds)
+            self._rich.start()
 
     def update(self, line: str) -> None:
+        if self._rich is not None:
+            fields = _extract_progress_fields(line)
+            if not fields:
+                return
+            seconds = (
+                _parse_ffmpeg_time_value(fields["time"])
+                if "time" in fields
+                else None
+            )
+            detail_parts: list[str] = []
+            if self._duration_seconds is None and "time" in fields:
+                detail_parts.append(f"time={fields['time']}")
+            for key in ("speed", "fps", "bitrate"):
+                if key in fields:
+                    detail_parts.append(f"{key}={fields[key]}")
+            self._rich.update(seconds, " ".join(detail_parts))
+            return
         status = _format_progress_status(
             line,
             duration_seconds=self._duration_seconds,
@@ -418,6 +465,11 @@ class _LiveProgressDisplay:
             _echo_line(status)
 
     def finish(self) -> None:
+        if self._rich is not None:
+            self._rich.finish()
+            self._rich = None
+            self._active = False
+            return
         if not self._active:
             return
         sys.stdout.write("\n")
@@ -655,7 +707,8 @@ def _interpret_failure(
         source_context=source_context,
     )
     try:
-        raw_response = ai_provider.complete(prompt.system, prompt.user)
+        with ui.thinking("Diagnosing failure…"):
+            raw_response = ai_provider.complete(prompt.system, prompt.user)
         parsed = parse_interpret_response(raw_response)
     except PromptParseError as exc:
         typer.secho(
@@ -694,13 +747,16 @@ def _generate_once(
             verbose=verbose,
             source_context=source_context,
         )
+        label = "Revising command…"
     else:
         prompt = build_generate_prompt(
             request=request,
             verbose=verbose,
             source_context=source_context,
         )
-    raw_response = ai_provider.complete(prompt.system, prompt.user)
+        label = "Generating command…"
+    with ui.thinking(label):
+        raw_response = ai_provider.complete(prompt.system, prompt.user)
     parsed = parse_generate_response(raw_response)
     return parsed.command, parsed.explanation
 
@@ -745,7 +801,7 @@ def _run_generate_confirm_loop(
             except Exception as exc:
                 _exit_provider_error(exc)
 
-        _echo(command)
+        _show_command(command)
         preflight = preflight_from_command(
             command,
             user_request=request,
@@ -829,7 +885,8 @@ def _explain_once(
             verbose=verbose,
             source_context=source_context,
         )
-        raw_response = ai_provider.complete(prompt.system, prompt.user)
+        with ui.thinking("Explaining command…"):
+            raw_response = ai_provider.complete(prompt.system, prompt.user)
         parsed = parse_explain_response(raw_response)
     except PromptParseError as exc:
         typer.secho(
@@ -865,7 +922,7 @@ def _run_preset_by_nickname(
         return False
 
     _echo(f"Preset '{preset.nickname}':")
-    _echo(command)
+    _show_command(command)
     preflight = preflight_from_command(command, probed_paths=list(inputs))
     _print_preflight_findings(preflight)
     if has_preflight_errors(preflight):
@@ -920,8 +977,10 @@ def _handle_repl_preset_command(raw: str) -> None:
         presets = load_presets()
         if not presets:
             _echo("No presets saved yet. Use 'save <nickname>' after generating.")
-        for nickname in sorted(presets):
-            _echo(_format_preset_line(presets[nickname]))
+        else:
+            _print_preset_collection(
+                [presets[nickname] for nickname in sorted(presets)]
+            )
         return
 
     if sub == "search":
@@ -931,8 +990,8 @@ def _handle_repl_preset_command(raw: str) -> None:
         results = search_presets(" ".join(args))
         if not results:
             _echo("No presets matched.")
-        for preset in results:
-            _echo(_format_preset_line(preset))
+        else:
+            _print_preset_collection(list(results))
         return
 
     if sub == "delete":
@@ -1107,8 +1166,7 @@ def preset_list() -> None:
     if not presets:
         _echo("No presets saved yet. Save one with: meg preset save <nickname> \"<command>\"")
         return
-    for nickname in sorted(presets):
-        _echo(_format_preset_line(presets[nickname]))
+    _print_preset_collection([presets[nickname] for nickname in sorted(presets)])
 
 
 @preset_app.command("search")
@@ -1121,8 +1179,7 @@ def preset_search(
     if not results:
         _echo("No presets matched.")
         raise typer.Exit(code=1)
-    for preset in results:
-        _echo(_format_preset_line(preset))
+    _print_preset_collection(list(results))
 
 
 @preset_app.command("delete")
