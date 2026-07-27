@@ -95,16 +95,27 @@ def _ensure_api_key() -> None:
         pass
 
 
-def _run_generate(case_id: str, prompt: str) -> dict[str, object]:
-    start = time.perf_counter()
-    proc = subprocess.run(
-        [str(MEG), prompt],
+def _run_meg(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run meg non-interactively.
+
+    stdin must be DEVNULL: with an inherited TTY, meg's run/edit/save menu
+    would wait forever for input while stdout is captured (invisible hang).
+    """
+    return subprocess.run(
+        argv,
         cwd=ROOT,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=180,
     )
+
+
+def _run_generate(case_id: str, prompt: str) -> dict[str, object]:
+    start = time.perf_counter()
+    proc = _run_meg([str(MEG), prompt])
     elapsed = round(time.perf_counter() - start, 2)
     return {
         "id": case_id,
@@ -119,14 +130,7 @@ def _run_generate(case_id: str, prompt: str) -> dict[str, object]:
 
 def _run_explain(case_id: str, command: str) -> dict[str, object]:
     start = time.perf_counter()
-    proc = subprocess.run(
-        [str(MEG), "--explain", command],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    proc = _run_meg([str(MEG), "--explain", command])
     elapsed = round(time.perf_counter() - start, 2)
     return {
         "id": case_id,

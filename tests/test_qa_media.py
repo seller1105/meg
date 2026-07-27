@@ -66,3 +66,20 @@ def test_pathbased_prompts_are_quoted() -> None:
     for _, prompt in generate:
         # every embedded path is wrapped in double quotes
         assert prompt.count('"') >= 2
+
+
+def test_run_meg_does_not_inherit_stdin() -> None:
+    """Regression: the QA runner hung forever when meg saw a TTY on stdin.
+
+    Launch a child that tries to read stdin; with DEVNULL it must get EOF
+    immediately instead of blocking.
+    """
+    proc = run_qa_suite._run_meg(
+        [
+            sys.executable,
+            "-c",
+            "import sys; data = sys.stdin.read(); print('EOF' if data == '' else 'GOT-INPUT')",
+        ]
+    )
+    assert proc.returncode == 0
+    assert "EOF" in proc.stdout
