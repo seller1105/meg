@@ -138,6 +138,8 @@ Probing is skipped for missing paths, network (UNC) paths, unreadable files, fil
 - **No-shell execution** — argv array only; `ffmpeg` / `ffprobe` allowlist; clear errors when binaries are missing
 - **Long encodes** — live progress on a TTY (`Encoding… time / duration speed frame`); press `q` to cancel or Ctrl+C to interrupt; **stall timeout** (default 180s without stderr activity, not a max encode length) via `MEG_EXEC_STALL_TIMEOUT_S`
 
+**Error Interpreter:** when a run fails, Meg prints the failure summary and offers `[f]ix with AI  [e]dit  [q]uit`. Choosing fix sends the failed command and stderr excerpt to the model, prints a plain-English diagnosis, and drops the corrected command back into the normal approval loop (fresh approval + pre-flight). If no command change can fix it (missing file, missing encoder), Meg says so instead of inventing a command. No API call happens unless you choose fix.
+
 **`--verbose`:** asks the model for a deeper explanation in both generate and explain modes. Default output stays minimal.
 
 **Models:** defaults are `claude-sonnet-4-5` (Anthropic) and `gpt-5` (OpenAI). Override per provider via `MEG_ANTHROPIC_MODEL` / `MEG_OPENAI_MODEL`, `~/.meg/config.toml` (`anthropic_model`, `openai_model`), or `--model` for the active provider.

@@ -29,6 +29,7 @@ Open-source CLI: plain English → FFmpeg command + explanation, or `--explain` 
 | 11 (partial) Pre-flight validation | Done (uncommitted) | `meg/preflight.py` — command sanity checks before execution |
 | 12 (partial) Preset vault | Done (uncommitted) | `meg/presets.py` — save/nickname/search/run presets, `~/.meg/presets.toml` |
 | 14 (partial) Interactive REPL | Done (uncommitted) | Bare `meg` opens a conversational session; save presets from the loop |
+| 11 (partial) Error Interpreter | Done | `[f]ix with AI` after failed runs — diagnosis + corrected command via `SYSTEM_PROMPT_INTERPRET` |
 
 **Tests:** `pytest` — **159+ passed**, 1 skipped (mocked providers + ffprobe + exec + progress + preflight + presets + REPL; no live API in CI).
 

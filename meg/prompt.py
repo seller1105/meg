@@ -33,6 +33,14 @@ class ExplainedCommand:
     explanation: str
 
 
+@dataclass(frozen=True)
+class InterpretedFailure:
+    """Structured interpret-mode result parsed from model output."""
+
+    diagnosis: str
+    command: str | None
+
+
 SYSTEM_PROMPT_GENERATE = """You are Meg, an expert FFmpeg assistant for terminal users.
 Return exactly two sections and nothing else:
 
@@ -75,6 +83,32 @@ Rules:
 - Call out non-obvious or risky choices (re-encode vs stream copy, filtergraph syntax, map order).
 - When verified source metadata is provided for an input file, reference those probed facts when explaining flags that depend on them.
 - Do not rewrite or "fix" the command unless a flag is clearly invalid.
+- Do not wrap output in markdown fences.
+- Do not include conversational filler.
+"""
+
+
+SYSTEM_PROMPT_INTERPRET = """You are Meg, an expert FFmpeg assistant for terminal users.
+A generated ffmpeg command was executed and failed. Diagnose the failure from the
+stderr excerpt and propose a corrected command when a command change can fix it.
+Return exactly two sections and nothing else:
+
+DIAGNOSIS:
+<2-4 short bullet points: what went wrong, in plain language, citing the stderr evidence>
+
+COMMAND:
+<one corrected ffmpeg command on a single line, or the single word NONE>
+
+Rules:
+- Output COMMAND: NONE when no command change can fix the failure (missing or unreadable
+  input file, missing encoder/library in this ffmpeg build, permissions, disk full). The
+  DIAGNOSIS must then say what the user should do instead.
+- The corrected command must change only what is needed to fix the failure; keep every
+  other flag, mapping, path, and codec choice from the failed command.
+- Never include -y; Meg confirms before overwriting existing output files.
+- Never write output to the input path.
+- When verified source metadata is provided, keep the corrections consistent with the
+  probed specs.
 - Do not wrap output in markdown fences.
 - Do not include conversational filler.
 """
@@ -154,6 +188,56 @@ def build_explain_prompt(
         user_prompt += f"\n{source_context}\n"
     user_prompt += detail_instruction
     return PromptBundle(system=SYSTEM_PROMPT_EXPLAIN, user=user_prompt)
+
+
+def build_interpret_prompt(
+    command: str,
+    stderr_excerpt: str,
+    request: str | None = None,
+    source_context: str | None = None,
+) -> PromptBundle:
+    """Build prompts to diagnose a failed run and propose a corrected command."""
+    user_prompt = "An ffmpeg command failed. Diagnose it and propose a fix.\n"
+    if request:
+        user_prompt += f"Original request: {request}\n"
+    user_prompt += (
+        f"Failed command: {command}\n"
+        "stderr excerpt:\n"
+        f"{stderr_excerpt.strip()}\n"
+    )
+    if source_context:
+        user_prompt += f"\n{source_context}\n"
+    return PromptBundle(system=SYSTEM_PROMPT_INTERPRET, user=user_prompt)
+
+
+def parse_interpret_response(response_text: str) -> InterpretedFailure:
+    """Parse model output into a diagnosis and optional corrected command."""
+    cleaned = _strip_code_fences(response_text)
+    match = re.fullmatch(
+        r"DIAGNOSIS:\s*\n(?P<diagnosis>.+?)\n\s*COMMAND:\s*\n(?P<command>.+)",
+        cleaned,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        raise PromptParseError(
+            "Model response format invalid. Expected DIAGNOSIS and COMMAND sections."
+        )
+
+    diagnosis = match.group("diagnosis").strip()
+    command_text = match.group("command").strip()
+
+    if not diagnosis:
+        raise PromptParseError("Model diagnosis must not be empty.")
+
+    if command_text.upper() == "NONE":
+        return InterpretedFailure(diagnosis=diagnosis, command=None)
+
+    if not command_text.startswith("ffmpeg "):
+        raise PromptParseError("Corrected command must start with 'ffmpeg ' or be NONE.")
+    if "\n" in command_text:
+        raise PromptParseError("Corrected command must be a single line.")
+
+    return InterpretedFailure(diagnosis=diagnosis, command=command_text)
 
 
 def parse_generate_response(response_text: str) -> GeneratedCommand:

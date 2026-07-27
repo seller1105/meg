@@ -6,6 +6,7 @@ import re
 import shutil
 import sys
 import threading
+from dataclasses import dataclass
 from typing import Callable, NoReturn, Optional
 
 import typer
@@ -37,9 +38,11 @@ from meg.prompt import (
     PromptParseError,
     build_explain_prompt,
     build_generate_prompt,
+    build_interpret_prompt,
     build_revise_prompt,
     parse_explain_response,
     parse_generate_response,
+    parse_interpret_response,
 )
 from meg.preflight import (
     PreflightFinding,
@@ -94,6 +97,18 @@ preset_app = typer.Typer(
 app.add_typer(preset_app)
 
 _read_line: Callable[[], str] = input
+
+
+@dataclass(frozen=True)
+class _FailedRun:
+    """Details of the most recent execution failure, for the fix flow."""
+
+    command: str
+    returncode: int
+    stderr_excerpt: str
+
+
+_last_failed_run: Optional[_FailedRun] = None
 
 _FFMPEG_PROGRESS_FIELD = re.compile(
     r"(?:frame=\s*(?P<frame>\d+)|fps=\s*(?P<fps>[\d.]+)|time=(?P<time>[\d:.]+)|"
@@ -194,6 +209,24 @@ def _prompt_run_edit_exit() -> str:
         if raw in {"q", "quit", "exit"}:
             return "exit"
         _echo("Enter r (run), e (edit), s (save preset), or q (quit).")
+
+
+def _prompt_fix_edit_exit() -> str:
+    """Return ``fix``, ``edit``, or ``exit`` from the post-failure menu."""
+    _echo("")
+    _echo("[f]ix with AI  [e]dit  [q]uit")
+    while True:
+        try:
+            raw = _read_line().strip().lower()
+        except EOFError:
+            return "exit"
+        if raw in {"f", "fix"}:
+            return "fix"
+        if raw in {"e", "edit"}:
+            return "edit"
+        if raw in {"q", "quit", "exit"}:
+            return "exit"
+        _echo("Enter f (fix with AI), e (edit), or q (quit).")
 
 
 def _prompt_save_preset(command: str) -> None:
@@ -508,8 +541,12 @@ def _execute_approved_command(
     """Parse, validate, and run an approved ffmpeg/ffprobe command.
 
     Returns True on success. On validation or execution failure, prints a
-    message and returns False so the user can edit or retry.
+    message and returns False so the user can edit or retry. Execution
+    failures (as opposed to declined approvals or validation errors) are
+    recorded in ``_last_failed_run`` for the AI fix flow.
     """
+    global _last_failed_run
+    _last_failed_run = None
     preflight = preflight_from_command(
         command,
         user_request=user_request,
@@ -587,9 +624,56 @@ def _execute_approved_command(
         fg=typer.colors.RED,
         err=True,
     )
+    if not (result.cancelled or result.stalled):
+        _last_failed_run = _FailedRun(
+            command=command,
+            returncode=result.returncode,
+            stderr_excerpt="\n".join(stderr_tail(result.stderr)),
+        )
     if _stdin_is_interactive():
         _prompt_show_stderr_tail(stderr_tail(result.stderr))
     return False
+
+
+def _interpret_failure(
+    ai_provider: AIProvider,
+    *,
+    failed: _FailedRun,
+    request: str | None,
+    source_context: str | None,
+):
+    """Ask the model to diagnose a failed run; print the diagnosis.
+
+    Returns the InterpretedFailure (command may be None when no command
+    change can fix it), or None when the model call itself failed — in both
+    cases the caller should return to the menu.
+    """
+    prompt = build_interpret_prompt(
+        failed.command,
+        failed.stderr_excerpt,
+        request=request,
+        source_context=source_context,
+    )
+    try:
+        raw_response = ai_provider.complete(prompt.system, prompt.user)
+        parsed = parse_interpret_response(raw_response)
+    except PromptParseError as exc:
+        typer.secho(
+            f"Could not parse model output: {exc}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        return None
+    except Exception as exc:
+        typer.secho(_format_provider_error(exc), fg=typer.colors.RED, err=True)
+        return None
+
+    _echo("")
+    _echo(parsed.diagnosis)
+    if parsed.command is None:
+        _echo("")
+        _echo("No command change can fix this failure; see the diagnosis above.")
+    return parsed
 
 
 def _generate_once(
@@ -636,27 +720,30 @@ def _run_generate_confirm_loop(
     """
     previous_command: str | None = None
     feedback: str | None = None
+    command: str | None = None
+    explanation: str = ""
     probed_paths = extract_media_paths(request)
 
     while True:
-        try:
-            command, explanation = _generate_once(
-                ai_provider,
-                request=request,
-                verbose=verbose,
-                source_context=source_context,
-                previous_command=previous_command,
-                feedback=feedback,
-            )
-        except PromptParseError as exc:
-            typer.secho(
-                f"Could not parse model output: {exc}",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1) from exc
-        except Exception as exc:
-            _exit_provider_error(exc)
+        if command is None:
+            try:
+                command, explanation = _generate_once(
+                    ai_provider,
+                    request=request,
+                    verbose=verbose,
+                    source_context=source_context,
+                    previous_command=previous_command,
+                    feedback=feedback,
+                )
+            except PromptParseError as exc:
+                typer.secho(
+                    f"Could not parse model output: {exc}",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(code=1) from exc
+            except Exception as exc:
+                _exit_provider_error(exc)
 
         _echo(command)
         preflight = preflight_from_command(
@@ -671,11 +758,13 @@ def _run_generate_confirm_loop(
         if not _stdin_is_interactive():
             return command
 
+        next_step = "edit"
         while True:
             choice = _prompt_run_edit_exit()
             if choice == "exit":
                 return command
             if choice == "edit":
+                next_step = "edit"
                 break
             if choice == "save":
                 _prompt_save_preset(command)
@@ -695,10 +784,35 @@ def _run_generate_confirm_loop(
                     allow_stdin_cancel=allow_stdin_cancel,
                 ):
                     return command
+                if _last_failed_run is not None:
+                    fix_choice = _prompt_fix_edit_exit()
+                    if fix_choice == "exit":
+                        return command
+                    if fix_choice == "edit":
+                        next_step = "edit"
+                        break
+                    corrected = _interpret_failure(
+                        ai_provider,
+                        failed=_last_failed_run,
+                        request=request,
+                        source_context=source_context,
+                    )
+                    if corrected is None or corrected.command is None:
+                        # Diagnosis (or error) already printed; menu again.
+                        continue
+                    previous_command = command
+                    command = corrected.command
+                    explanation = corrected.diagnosis
+                    next_step = "fixed"
+                    break
                 continue
 
-        feedback = _prompt_revision_feedback()
-        previous_command = command
+        if next_step == "edit":
+            feedback = _prompt_revision_feedback()
+            previous_command = command
+            command = None
+        # next_step == "fixed": corrected command is already set; the outer
+        # loop re-displays it (with preflight) without regenerating.
 
 
 def _explain_once(
