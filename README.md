@@ -1,8 +1,8 @@
 # Meg
 
-AI-powered FFmpeg assistant for the terminal. Describe what you want in plain English — Meg returns a ready-to-run `ffmpeg` command and a short explanation. Paste an existing command with `--explain` to get a breakdown.
+AI-powered FFmpeg assistant for the terminal. Describe what you want in plain English — Meg probes your source file, returns a ready-to-run `ffmpeg` command with a short explanation, and can run it in place behind per-command approval and safety checks. Paste an existing command with `--explain` to get a breakdown; run bare `meg` for an interactive session with a reusable preset vault and AI-assisted failure fixes.
 
-**Status:** v0.2.0 — source-aware generate via auto ffprobe; PyPI upload pending. See [docs/STATUS.md](docs/STATUS.md).
+**Status:** v0.2.0 — source-aware generate (auto ffprobe), safe in-terminal execution, presets, REPL, error interpreter, Rich terminal UI; PyPI upload pending. See [docs/STATUS.md](docs/STATUS.md).
 
 ## Docs
 
@@ -15,6 +15,7 @@ AI-powered FFmpeg assistant for the terminal. Describe what you want in plain En
 ## Requirements
 
 - Python 3.11+
+- **ffmpeg** on `PATH` (optional — needed only to run generated commands from inside Meg)
 - **ffprobe** on `PATH` (optional but recommended — Meg auto-probes local media files referenced in prompts)
 - An API key: [Anthropic](https://console.anthropic.com/) (`ANTHROPIC_API_KEY`) and/or [OpenAI](https://platform.openai.com/) (`OPENAI_API_KEY`)
 
@@ -115,7 +116,7 @@ meg preset search proxy
 meg preset delete proxy-1080
 ```
 
-**Default output (generate):** one `ffmpeg` line, blank line, then a short bullet explanation.
+**Default output (generate):** the `ffmpeg` command (syntax-highlighted panel on a terminal, single plain line when piped), then a short bullet explanation.
 
 **Explain mode:** prints only the breakdown (no echoed command).
 
@@ -127,7 +128,7 @@ meg preset delete proxy-1080
 
 Probing is skipped for missing paths, network (UNC) paths, unreadable files, files over 50 GiB, or if ffprobe is not installed. ffprobe runs via argv (no shell) with a 30s timeout. **Probe results are cached** per file (path + mtime + size) for the lifetime of the process, so edit/revise turns and repeat lookups do not re-run ffprobe.
 
-**Interactive session (REPL):** bare `meg` on a terminal opens a conversational session. Type requests in plain English, refine with edit feedback, `explain <command>`, and `save <nickname>` the last generated command as a preset. `help` lists all session commands.
+**Interactive session (REPL):** bare `meg` on a terminal opens a conversational session. Type requests in plain English, refine with edit feedback, `explain <command>`, and `save <nickname>` the last generated command as a preset. The preset vault is available in-session too (`presets`, `preset search/run/delete`). `help` lists all session commands.
 
 **Preset vault:** `meg preset save/list/search/run/delete` manages reusable commands in `~/.meg/presets.toml`. Input and output paths are templatized on save, so `meg preset run <nickname> <file>` applies the same encode settings to any source file — the output path is re-derived beside the new input (extension preserved from the preset). Presets can also be saved from the post-generate menu (`[s]ave`) or from the REPL. Preset runs go through the same pre-flight checks and per-command approval as generated commands.
 
@@ -183,7 +184,7 @@ git push origin v0.2.0
 
 ```
 meg/
-├── meg/           # package (cli, config, prompt, ffprobe, exec, providers)
+├── meg/           # package (cli, ui, config, prompt, ffprobe, exec, preflight, presets, providers)
 ├── tests/
 ├── docs/          # roadmap, STATUS, qa-run.json
 ├── scripts/       # QA helpers
