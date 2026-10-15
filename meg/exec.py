@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path, PureWindowsPath
 
+from meg.tools import resolve_executable
+
 
 ALLOWED_EXECUTABLES = frozenset({"ffmpeg", "ffprobe"})
 
@@ -605,7 +607,7 @@ def run_managed_command(
     spawn = popen_factory or subprocess.Popen
 
     try:
-        proc = spawn(argv_list, **_popen_kwargs())
+        proc = spawn(_resolved(argv_list), **_popen_kwargs())
     except FileNotFoundError:
         return ExecutionResult(
             returncode=EXEC_MISSING_RC,
@@ -661,6 +663,11 @@ def run_managed_command(
     return _build_managed_result(proc, state)
 
 
+def _resolved(argv: list[str]) -> list[str]:
+    """argv with ffmpeg/ffprobe pointed at Meg's copy when PATH has none."""
+    return [resolve_executable(argv[0]), *argv[1:]]
+
+
 def missing_executable_message(argv0: str) -> str:
     """Human-readable message when ffmpeg/ffprobe is not on PATH."""
     name = _executable_name(argv0)
@@ -681,7 +688,7 @@ def run_command(
     run = subprocess_run or subprocess.run
     try:
         completed = run(
-            argv_list,
+            _resolved(argv_list),
             stdout=None,
             stderr=subprocess.PIPE,
             text=True,

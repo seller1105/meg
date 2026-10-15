@@ -6,10 +6,11 @@ from dataclasses import dataclass
 import json
 import os
 import re
-import shutil
 import subprocess
 from fractions import Fraction
 from pathlib import Path
+
+from meg.tools import find_tool, resolve_executable
 
 
 class FfprobeError(RuntimeError):
@@ -206,7 +207,7 @@ def probe_media_summary(
     if cached is not None:
         return cached
 
-    binary = ffprobe_bin or shutil.which("ffprobe")
+    binary = ffprobe_bin or find_tool("ffprobe")
     if binary is None:
         return None
 
@@ -381,7 +382,7 @@ def run_ffprobe(
     try:
         completed = subprocess.run(
             [
-                ffprobe_bin,
+                resolve_executable(ffprobe_bin),
                 "-v",
                 "quiet",
                 "-print_format",
@@ -436,7 +437,7 @@ def build_source_context(paths: list[str], *, ffprobe_bin: str | None = None) ->
     if not paths:
         return None
 
-    binary = ffprobe_bin or shutil.which("ffprobe")
+    binary = ffprobe_bin or find_tool("ffprobe")
     if binary is None:
         return None
 
