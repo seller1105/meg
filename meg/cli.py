@@ -15,6 +15,7 @@ from meg import ui
 from meg.config import ConfigError, load_config, load_env_files
 from meg.exec import (
     CommandValidationError,
+    _executable_name,
     _is_concrete_output_path,
     ExecutionResult,
     FfmpegSafetyReport,
@@ -129,12 +130,7 @@ def _stdout_is_interactive() -> bool:
 
 
 def _executable_basename(argv0: str) -> str:
-    from pathlib import Path
-
-    name = Path(argv0).name.lower()
-    if name.endswith(".exe"):
-        return name[:-4]
-    return name
+    return _executable_name(argv0)
 
 
 def _configure_terminal_utf8() -> None:

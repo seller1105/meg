@@ -11,7 +11,7 @@ import signal
 import subprocess
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 
 ALLOWED_EXECUTABLES = frozenset({"ffmpeg", "ffprobe"})
@@ -183,8 +183,12 @@ def _split_posix() -> bool:
 
 
 def _executable_name(argv0: str) -> str:
-    """Return the normalized basename of the executable (without .exe)."""
-    name = Path(argv0).name.lower()
+    """Return the normalized basename of the executable (without .exe).
+
+    Windows path rules split on both backslash and slash, so a Windows path is
+    recognized on any OS (and CI on Linux sees what users on Windows see).
+    """
+    name = PureWindowsPath(argv0).name.lower()
     if name.endswith(".exe"):
         return name[:-4]
     return name
