@@ -113,6 +113,28 @@ def test_system_prompt_forbids_blind_y() -> None:
     assert "Never include -y" in SYSTEM_PROMPT_GENERATE
 
 
+def test_generate_and_interpret_prompts_explain_command_splitting() -> None:
+    from meg.prompt import SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_INTERPRET
+
+    for system in (SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_INTERPRET):
+        assert "There is no shell" in system
+        assert r"fontfile='C\:/Windows/Fonts/arial.ttf'" in system
+        assert r"timecode='01\:00\:00\;00'" in system
+        assert "-vendor apl0" in system
+
+
+def test_prompt_filter_examples_reach_ffmpeg_unchanged() -> None:
+    # The prompt teaches these spellings; they must survive Meg's argv split as written.
+    from meg.exec import parse_command_line
+
+    vf = r"drawtext=fontfile='C\:/Windows/Fonts/arial.ttf':timecode='01\:00\:00\;00':rate=60000/1001"
+    argv = parse_command_line(f'ffmpeg -i "in put.mov" -vf "{vf}" out.mov').argv
+    assert argv[4] == vf
+    # And the prompt's warning holds: a doubled backslash inside double quotes collapses.
+    argv = parse_command_line(r'ffmpeg -vf "drawtext=fontfile=C\\:/x.ttf" out.mov').argv
+    assert argv[2] == r"drawtext=fontfile=C\:/x.ttf"
+
+
 def test_build_explain_prompt_includes_command() -> None:
     bundle = build_explain_prompt("ffmpeg -i input.mp4 -c copy output.mp4")
     assert "Command: ffmpeg -i input.mp4 -c copy output.mp4" in bundle.user

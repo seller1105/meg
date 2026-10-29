@@ -41,6 +41,33 @@ class InterpretedFailure:
     command: str | None
 
 
+# Shared by generate and interpret: how Meg turns the COMMAND line into argv, and the
+# filter escaping and drawtext mistakes that follow from it. Raw string, so the
+# backslashes reach the model exactly as written.
+_COMMAND_SYNTAX_RULES = r"""
+How Meg runs the command (on every OS, including Windows):
+- There is no shell. Meg splits the COMMAND line into arguments with POSIX quoting rules
+  (Python shlex) and starts ffmpeg directly. cmd.exe, PowerShell and bash never see it,
+  so never blame or work around their quoting.
+- Wrap any argument that contains spaces, ; , [ ] or ' in double quotes. Inside double
+  quotes only \\ and \" are escapes (\\ becomes \); every other backslash is kept as is,
+  and single quotes pass through to ffmpeg unchanged.
+- Filter arguments (-vf, -af, -filter_complex) are unescaped twice by ffmpeg: once for the
+  filtergraph, once for each filter's options. A colon inside an option value (a Windows
+  drive letter, a timecode) must be single-quoted and escaped: fontfile='C\:/Windows/Fonts/arial.ttf'.
+  Use forward slashes in paths inside filters.
+
+Burned-in timecode (drawtext):
+- Use timecode='HH\:MM\:SS\:FF' with rate= set to the source frame rate (rate=24000/1001,
+  rate=25, rate=30000/1001, rate=60000/1001). Do not use %{pts:hms}: it shows clock time
+  with milliseconds, not timecode.
+- For 29.97 and 59.94 fps use drop-frame: separate the frames with \; (timecode='01\:00\:00\;00').
+- Give drawtext an explicit fontfile; on Windows use fontfile='C\:/Windows/Fonts/arial.ttf'.
+
+ProRes (prores_ks): -profile:v 0 Proxy, 1 LT, 2 422, 3 HQ, 4 4444, 5 4444 XQ. The Apple
+vendor tag is -vendor apl0 (lowercase L, then zero).
+"""
+
 SYSTEM_PROMPT_GENERATE = """You are Meg, an expert FFmpeg assistant for terminal users.
 Return exactly two sections and nothing else:
 
@@ -69,7 +96,7 @@ Rules:
   - The EXPLANATION must cite probed values: what was kept from the source and what was changed to satisfy the request.
 - Do not wrap the command in markdown fences.
 - Do not include conversational filler.
-"""
+""" + _COMMAND_SYNTAX_RULES
 
 SYSTEM_PROMPT_EXPLAIN = """You are Meg, an expert FFmpeg assistant for terminal users.
 Return exactly one section and nothing else:
@@ -111,7 +138,7 @@ Rules:
   probed specs.
 - Do not wrap output in markdown fences.
 - Do not include conversational filler.
-"""
+""" + _COMMAND_SYNTAX_RULES
 
 
 def _strip_code_fences(text: str) -> str:
