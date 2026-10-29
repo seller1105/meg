@@ -121,6 +121,7 @@ def test_generate_and_interpret_prompts_explain_command_splitting() -> None:
         assert r"fontfile='C\:/Windows/Fonts/arial.ttf'" in system
         assert r"timecode='01\:00\:00\;00'" in system
         assert "-vendor apl0" in system
+    assert "No option name near" in SYSTEM_PROMPT_INTERPRET
 
 
 def test_prompt_filter_examples_reach_ffmpeg_unchanged() -> None:
